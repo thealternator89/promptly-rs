@@ -1,3 +1,5 @@
+pub mod editor;
+
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, StyledExt,
@@ -14,6 +16,12 @@ use crate::app::{AppShell, WorkspaceMode, WorkspaceTarget};
 ///
 /// Full Editor and Viewer block views are implemented in Phases 4 and 5.
 pub fn render_workspace_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> AnyElement {
+    if shell.workspace_mode == WorkspaceMode::Editor
+        && let Some(editor) = &shell.editor
+    {
+        return editor.clone().into_any_element();
+    }
+
     let theme = cx.theme();
     let border_color = theme.border;
     let muted_fg = theme.muted_foreground;
@@ -82,8 +90,8 @@ pub fn render_workspace_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -
                                 .when(mode == WorkspaceMode::Viewer, |b| b.primary())
                                 .when(mode != WorkspaceMode::Viewer, |b| b.ghost())
                                 .label("Viewer")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.set_workspace_mode(WorkspaceMode::Viewer, cx);
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.set_workspace_mode(WorkspaceMode::Viewer, window, cx);
                                 })),
                         )
                         .child(
@@ -92,8 +100,8 @@ pub fn render_workspace_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -
                                 .when(mode == WorkspaceMode::Editor, |b| b.primary())
                                 .when(mode != WorkspaceMode::Editor, |b| b.ghost())
                                 .label("Editor")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.set_workspace_mode(WorkspaceMode::Editor, cx);
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.set_workspace_mode(WorkspaceMode::Editor, window, cx);
                                 })),
                         )
                         .child(

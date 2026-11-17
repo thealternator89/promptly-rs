@@ -11,6 +11,7 @@ use gpui_kit::{prelude::FluentBuilder as _, *};
 use crate::model::{AppSettings, Prompt, ViewerSession};
 use crate::services::StorageService;
 use crate::ui::sidebar::LibrarySidebar;
+use crate::ui::workspace::editor::PromptEditor;
 use crate::ui::workspace::{render_live_preview_pane, render_workspace_pane};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +36,7 @@ pub struct AppShell {
     pub show_live_preview: bool,
     pub sessions: HashMap<String, Entity<ViewerSession>>,
     pub sidebar: Entity<LibrarySidebar>,
+    pub editor: Option<Entity<PromptEditor>>,
     pub status_message: Option<String>,
 }
 
@@ -69,6 +71,7 @@ impl AppShell {
             show_live_preview: false,
             sessions,
             sidebar,
+            editor: None,
             status_message: None,
         }
     }
@@ -76,6 +79,7 @@ impl AppShell {
     pub fn select_scratchpad(&mut self, cx: &mut Context<Self>) {
         self.active_target = WorkspaceTarget::Scratchpad;
         self.workspace_mode = WorkspaceMode::Viewer;
+        self.editor = None;
         self.sessions
             .entry("scratchpad".to_string())
             .or_insert_with(|| cx.new(|_| ViewerSession::scratchpad()));
@@ -90,20 +94,92 @@ impl AppShell {
                 .or_insert_with(|| cx.new(|_| ViewerSession::from_prompt(&prompt)));
             self.active_target = WorkspaceTarget::SavedPrompt(id);
             self.workspace_mode = WorkspaceMode::Viewer;
+            self.editor = None;
             self.status_message = None;
             cx.notify();
         }
     }
 
-    pub fn start_new_prompt(&mut self, cx: &mut Context<Self>) {
+    pub fn start_new_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak = cx.weak_entity();
+        self.editor = Some(cx.new(|cx| PromptEditor::new_blank(weak, window, cx)));
         self.active_target = WorkspaceTarget::NewPrompt;
         self.workspace_mode = WorkspaceMode::Editor;
         self.status_message = None;
         cx.notify();
     }
 
-    pub fn set_workspace_mode(&mut self, mode: WorkspaceMode, cx: &mut Context<Self>) {
+    pub fn set_workspace_mode(
+        &mut self,
+        mode: WorkspaceMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if mode == WorkspaceMode::Editor {
+            let weak = cx.weak_entity();
+            match &self.active_target {
+                WorkspaceTarget::SavedPrompt(id) => {
+                    if let Some(prompt) = self.prompts.iter().find(|p| &p.id == id).cloned() {
+                        self.editor =
+                            Some(cx.new(|cx| PromptEditor::from_prompt(weak, &prompt, window, cx)));
+                    }
+                }
+                WorkspaceTarget::NewPrompt | WorkspaceTarget::Scratchpad => {
+                    self.active_target = WorkspaceTarget::NewPrompt;
+                    self.editor = Some(cx.new(|cx| PromptEditor::new_blank(weak, window, cx)));
+                }
+            }
+        } else {
+            self.editor = None;
+        }
         self.workspace_mode = mode;
+        cx.notify();
+    }
+
+    pub fn save_edited_prompt(&mut self, prompt: Prompt, cx: &mut Context<Self>) {
+        if let Err(err) = self.storage.save_prompt(&prompt) {
+            self.status_message = Some(format!("Failed to save prompt: {err}"));
+            cx.notify();
+            return;
+        }
+
+        self.prompts = self.storage.load_prompts().unwrap_or_else(|err| {
+            self.status_message = Some(format!("Saved, but failed to reload prompts: {err}"));
+            self.prompts.clone()
+        });
+
+        let id = prompt.id.clone();
+        self.sessions
+            .insert(id.clone(), cx.new(|_| ViewerSession::from_prompt(&prompt)));
+        self.active_target = WorkspaceTarget::SavedPrompt(id);
+        self.workspace_mode = WorkspaceMode::Viewer;
+        self.editor = None;
+        self.status_message = Some(format!("Saved \"{}\"", prompt.title));
+        cx.notify();
+    }
+
+    pub fn cancel_editor(&mut self, existing_id: Option<String>, cx: &mut Context<Self>) {
+        self.editor = None;
+        self.workspace_mode = WorkspaceMode::Viewer;
+        match existing_id {
+            Some(id) => self.active_target = WorkspaceTarget::SavedPrompt(id),
+            None => self.active_target = WorkspaceTarget::Scratchpad,
+        }
+        cx.notify();
+    }
+
+    pub fn delete_prompt(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Err(err) = self.storage.delete_prompt(id) {
+            self.status_message = Some(format!("Failed to delete prompt: {err}"));
+            cx.notify();
+            return;
+        }
+        self.prompts.retain(|p| p.id != id);
+        self.sessions.remove(id);
+        self.editor = None;
+        self.active_target = WorkspaceTarget::Scratchpad;
+        self.workspace_mode = WorkspaceMode::Viewer;
+        self.status_message = Some("Prompt deleted.".to_string());
         cx.notify();
     }
 

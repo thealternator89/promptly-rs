@@ -124,9 +124,9 @@ impl Render for LibrarySidebar {
                                             .label("New")
                                             .on_click({
                                                 let app = app.clone();
-                                                move |_, _, cx| {
+                                                move |_, window, cx| {
                                                     app.update(cx, |shell, cx| {
-                                                        shell.start_new_prompt(cx);
+                                                        shell.start_new_prompt(window, cx);
                                                     });
                                                 }
                                             }),
