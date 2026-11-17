@@ -20,7 +20,7 @@ use crate::ui::modals::{
 };
 use crate::ui::sidebar::LibrarySidebar;
 use crate::ui::workspace::editor::PromptEditor;
-use crate::ui::workspace::{render_live_preview_pane, render_workspace_pane};
+use crate::ui::workspace::render_workspace_pane;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkspaceTarget {
@@ -441,11 +441,9 @@ impl Render for AppShell {
         let muted_fg = theme.muted_foreground;
         let title_bar_bg = theme.title_bar;
         let prompt_count = self.prompts.len();
-        let show_preview = self.show_live_preview;
         let status_message = self.status_message.clone();
 
         let workspace_pane = render_workspace_pane(self, cx);
-        let preview_pane = render_live_preview_pane(self, cx);
 
         let modal_overlay = self.active_modal.as_ref().map(|m| match m {
             ActiveModal::Import(e) => e.clone().into_any_element(),
@@ -477,14 +475,7 @@ impl Render for AppShell {
                                 .size_range(px(220.)..px(420.))
                                 .child(self.sidebar.clone()),
                         )
-                        .child(resizable_panel().child(workspace_pane))
-                        .child(
-                            resizable_panel()
-                                .visible(show_preview)
-                                .size(px(360.))
-                                .size_range(px(260.)..px(600.))
-                                .child(preview_pane),
-                        ),
+                        .child(resizable_panel().child(workspace_pane)),
                 ),
             )
             // Global Footer

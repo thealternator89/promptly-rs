@@ -4,6 +4,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     label::Label,
+    resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement as _,
     v_flex,
 };
@@ -22,6 +23,7 @@ use crate::ui::blocks::{
     quote::render_quote_viewer,
     repeatable::render_repeatable_viewer,
 };
+use crate::ui::workspace::preview::render_live_preview_pane;
 
 #[derive(Clone)]
 pub struct DragViewerPart {
@@ -58,11 +60,140 @@ pub fn render_viewer_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> A
     let theme = cx.theme();
     let border_color = theme.border;
     let muted_fg = theme.muted_foreground;
+    let bg_color = theme.background;
+    let secondary_bg = theme.secondary;
+    let primary_color = theme.primary;
+
+    let body_content = v_flex()
+        .size_full()
+        .overflow_y_scrollbar()
+        .p_5()
+        .gap_3()
+        .when(parts.is_empty(), |el| {
+            el.child(
+                div()
+                    .p_6()
+                    .rounded_lg()
+                    .border_1()
+                    .border_dashed()
+                    .border_color(border_color)
+                    .child(
+                        Label::new(
+                            "This workspace is empty. Add a temporary section below to start assembling a prompt.",
+                        )
+                        .text_sm()
+                        .text_color(muted_fg),
+                    ),
+            )
+        })
+        .children(parts.iter().map(|part| {
+            let part_id = part.id().to_string();
+            let badge = part_badge(part);
+            let drag_payload = DragViewerPart {
+                id: part_id.clone(),
+                label: badge.to_string(),
+            };
+
+            let body = match part {
+                PromptPart::Heading { text, level, .. } => render_heading_viewer(text, *level),
+                PromptPart::Fixed { text, .. } => render_fixed_viewer(text, cx),
+                PromptPart::Custom { single_line, .. } => {
+                    render_custom_viewer(&part_id, single_line.unwrap_or(false), session)
+                }
+                PromptPart::Quote { .. } => render_quote_viewer(&part_id, session, cx),
+                PromptPart::Code { .. } => {
+                    render_code_viewer(&part_id, &session_entity, session)
+                }
+                PromptPart::Hr { .. } => render_hr_viewer(cx),
+                PromptPart::Repeatable { template_parts, .. } => render_repeatable_viewer(
+                    &part_id,
+                    template_parts,
+                    &session_entity,
+                    session,
+                    cx,
+                ),
+            };
+
+            let frame = BlockFrame::new(
+                SharedString::from(format!("viewer-block-{part_id}")),
+                badge,
+            )
+            .on_remove({
+                let se = session_entity.clone();
+                let pid = part_id.clone();
+                move |_, _, cx| {
+                    se.update(cx, |sess, cx| {
+                        sess.remove_part(&pid, cx);
+                    });
+                }
+            })
+            .child(body);
+
+            div()
+                .id(SharedString::from(format!("drag-viewer-{part_id}")))
+                .on_drag(drag_payload, |drag, _, _, cx| {
+                    let label = drag.label.clone();
+                    cx.new(|_| DragViewerPreview { label })
+                })
+                .drag_over::<DragViewerPart>(move |style, _, _, _| {
+                    style.border_t_2().border_color(primary_color)
+                })
+                .on_drop({
+                    let se = session_entity.clone();
+                    let target_id = part_id.clone();
+                    move |drag: &DragViewerPart, _, cx| {
+                        se.update(cx, |sess, cx| {
+                            sess.reorder_part(&drag.id, &target_id, cx);
+                        });
+                    }
+                })
+                .child(frame)
+        }))
+        // Bottom "Add temporary section" bar
+        .child(
+            v_flex()
+                .mt_2()
+                .p_3()
+                .rounded_lg()
+                .bg(secondary_bg)
+                .border_1()
+                .border_color(border_color)
+                .gap_2()
+                .child(
+                    Label::new("Add temporary section")
+                        .text_xs()
+                        .font_semibold()
+                        .text_color(muted_fg),
+                )
+                .child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .children(TemporarySectionKind::ALL.iter().copied().map(|kind| {
+                            let se = session_entity.clone();
+                            Button::new(SharedString::from(format!(
+                                "add-temp-{}",
+                                kind.label()
+                            )))
+                            .small()
+                            .outline()
+                            .icon(Icon::new(IconName::Plus))
+                            .label(kind.label())
+                            .on_click(move |_, window, cx| {
+                                se.update(cx, |sess, cx| {
+                                    sess.add_temporary_section(kind, window, cx);
+                                });
+                            })
+                        })),
+                ),
+        );
+
+    let preview_pane = render_live_preview_pane(shell, cx);
 
     v_flex()
         .size_full()
-        .bg(theme.background)
-        // Sticky Header
+        .bg(bg_color)
+        // Sticky Header (full width above blocks + preview split)
         .child(
             h_flex()
                 .px_4()
@@ -146,136 +277,19 @@ pub fn render_viewer_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> A
                         ),
                 ),
         )
-        // Scrollable Block List + Bottom Temporary Section Bar
+        // Body Split: Scrollable Block List + Optional Live Preview under the Header
         .child(
-            v_flex()
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scrollbar()
-                .p_5()
-                .gap_3()
-                .when(parts.is_empty(), |el| {
-                    el.child(
-                        div()
-                            .p_6()
-                            .rounded_lg()
-                            .border_1()
-                            .border_dashed()
-                            .border_color(border_color)
-                            .child(
-                                Label::new(
-                                    "This workspace is empty. Add a temporary section below to start assembling a prompt.",
-                                )
-                                .text_sm()
-                                .text_color(muted_fg),
-                            ),
-                    )
-                })
-                .children(parts.iter().map(|part| {
-                    let part_id = part.id().to_string();
-                    let badge = part_badge(part);
-                    let drag_payload = DragViewerPart {
-                        id: part_id.clone(),
-                        label: badge.to_string(),
-                    };
-
-                    let body = match part {
-                        PromptPart::Heading { text, level, .. } => {
-                            render_heading_viewer(text, *level)
-                        }
-                        PromptPart::Fixed { text, .. } => render_fixed_viewer(text, cx),
-                        PromptPart::Custom { single_line, .. } => {
-                            render_custom_viewer(&part_id, single_line.unwrap_or(false), session)
-                        }
-                        PromptPart::Quote { .. } => render_quote_viewer(&part_id, session, cx),
-                        PromptPart::Code { .. } => {
-                            render_code_viewer(&part_id, &session_entity, session)
-                        }
-                        PromptPart::Hr { .. } => render_hr_viewer(cx),
-                        PromptPart::Repeatable { template_parts, .. } => {
-                            render_repeatable_viewer(
-                                &part_id,
-                                template_parts,
-                                &session_entity,
-                                session,
-                                cx,
-                            )
-                        }
-                    };
-
-                    let frame = BlockFrame::new(
-                        SharedString::from(format!("viewer-block-{part_id}")),
-                        badge,
-                    )
-                    .on_remove({
-                        let se = session_entity.clone();
-                        let pid = part_id.clone();
-                        move |_, _, cx| {
-                            se.update(cx, |sess, cx| {
-                                sess.remove_part(&pid, cx);
-                            });
-                        }
-                    })
-                    .child(body);
-
-                    div()
-                        .id(SharedString::from(format!("drag-viewer-{part_id}")))
-                        .on_drag(drag_payload, |drag, _, _, cx| {
-                            let label = drag.label.clone();
-                            cx.new(|_| DragViewerPreview { label })
-                        })
-                        .drag_over::<DragViewerPart>(|style, _, _, cx| {
-                            style.border_t_2().border_color(cx.theme().primary)
-                        })
-                        .on_drop({
-                            let se = session_entity.clone();
-                            let target_id = part_id.clone();
-                            move |drag: &DragViewerPart, _, cx| {
-                                se.update(cx, |sess, cx| {
-                                    sess.reorder_part(&drag.id, &target_id, cx);
-                                });
-                            }
-                        })
-                        .child(frame)
-                }))
-                // Bottom "Add temporary section" bar
-                .child(
-                    v_flex()
-                        .mt_2()
-                        .p_3()
-                        .rounded_lg()
-                        .bg(theme.secondary)
-                        .border_1()
-                        .border_color(border_color)
-                        .gap_2()
-                        .child(
-                            Label::new("Add temporary section")
-                                .text_xs()
-                                .font_semibold()
-                                .text_color(muted_fg),
-                        )
-                        .child(
-                            h_flex()
-                                .flex_wrap()
-                                .gap_2()
-                                .children(TemporarySectionKind::ALL.iter().copied().map(|kind| {
-                                    let se = session_entity.clone();
-                                    Button::new(SharedString::from(format!(
-                                        "add-temp-{}",
-                                        kind.label()
-                                    )))
-                                    .small()
-                                    .outline()
-                                    .icon(Icon::new(IconName::Plus))
-                                    .label(kind.label())
-                                    .on_click(move |_, window, cx| {
-                                        se.update(cx, |sess, cx| {
-                                            sess.add_temporary_section(kind, window, cx);
-                                        });
-                                    })
-                                })),
-                        ),
-                ),
+            div().flex_1().min_h_0().child(
+                h_resizable("viewer-body-split")
+                    .child(resizable_panel().child(body_content))
+                    .child(
+                        resizable_panel()
+                            .visible(show_preview)
+                            .size(px(360.))
+                            .size_range(px(260.)..px(600.))
+                            .child(preview_pane),
+                    ),
+            ),
         )
         .into_any_element()
 }

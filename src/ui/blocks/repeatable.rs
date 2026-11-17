@@ -235,6 +235,9 @@ pub fn render_repeatable_viewer(
             let pid = parent_id_owned.clone();
 
             v_flex()
+                .id(SharedString::from(format!(
+                    "rep-inst-{pid}-{inst_id_owned}"
+                )))
                 .p_3()
                 .rounded_md()
                 .bg(bg)
@@ -273,7 +276,7 @@ pub fn render_repeatable_viewer(
                 )
                 .children(template_parts.iter().map(|child| {
                     let key = composite_key(&pid, &inst_id_owned, child.id());
-                    match child {
+                    let inner = match child {
                         PromptPart::Heading { text, level, .. } => {
                             render_heading_viewer(text, *level)
                         }
@@ -289,7 +292,10 @@ pub fn render_repeatable_viewer(
                         }
                         PromptPart::Hr { .. } => render_hr_viewer(cx),
                         PromptPart::Repeatable { .. } => div().into_any_element(),
-                    }
+                    };
+                    div()
+                        .id(SharedString::from(format!("rep-child-{key}")))
+                        .child(inner)
                 }))
         }))
         .child(

@@ -10,7 +10,7 @@ use crate::app::AppShell;
 
 fn main() {
     application()
-        .with_assets(assets::Assets)
+        .with_assets(assets::AllAssets)
         .run(|cx| {
             init(cx);
 
