@@ -1,3 +1,6 @@
+pub mod model;
+pub mod services;
+
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
     label::Label,
