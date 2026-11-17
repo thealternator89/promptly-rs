@@ -1,40 +1,30 @@
+pub mod app;
 pub mod model;
 pub mod services;
+pub mod ui;
 
-use gpui_kit::component::{
-    button::{Button, ButtonVariants},
-    label::Label,
-};
+use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
-struct HelloWorld;
-
-impl Render for HelloWorld {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .gap_2()
-            .child(Label::new("Hello, World!"))
-            .child(
-                Button::new("hello")
-                    .primary()
-                    .label("Click me")
-                    .on_click(|_, _, _| println!("Clicked!")),
-            )
-    }
-}
+use crate::app::AppShell;
 
 fn main() {
     application()
         .with_assets(assets::Assets)
         .run(|cx| {
             init(cx);
-            open_window(WindowOptions::default(), cx, |_, cx| {
-                cx.new(|_| HelloWorld)
+
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(1366.), px(768.)),
+                    cx,
+                ))),
+                ..TitleBar::window_options()
+            };
+
+            open_window(options, cx, |window, cx| {
+                cx.new(|cx| AppShell::new(window, cx))
             })
             .expect("Failed to open window");
         });
