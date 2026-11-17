@@ -1,19 +1,57 @@
 use std::collections::HashMap;
 
-use crate::model::{Prompt, PromptPart};
+use gpui_kit::component::{
+    IndexPath,
+    input::{InputEvent, InputState, TextareaState},
+    searchable_list::SearchableVec,
+    select::{SelectEvent, SelectState},
+};
+use gpui_kit::*;
+use uuid::Uuid;
+
+use crate::model::{Language, Prompt, PromptPart};
+use crate::services::{compile_prompt, fix_indentation, strip_disallowed_urls};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporarySectionKind {
+    Custom,
+    Quote,
+    Code,
+    Hr,
+}
+
+impl TemporarySectionKind {
+    pub const ALL: &'static [TemporarySectionKind] = &[
+        TemporarySectionKind::Custom,
+        TemporarySectionKind::Quote,
+        TemporarySectionKind::Code,
+        TemporarySectionKind::Hr,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            TemporarySectionKind::Custom => "Custom Input",
+            TemporarySectionKind::Quote => "Quote",
+            TemporarySectionKind::Code => "Code Block",
+            TemporarySectionKind::Hr => "Rule",
+        }
+    }
+}
 
 /// Cached runtime state for a Prompt Viewer or Scratchpad session.
-///
-/// Full interactive block state and compilation wiring are expanded in Phase 5.
-#[derive(Debug, Clone)]
 pub struct ViewerSession {
     pub prompt_id: String,
     pub title: String,
+    pub source_parts: Vec<PromptPart>,
     pub session_parts: Vec<PromptPart>,
     pub values: HashMap<String, String>,
     pub languages: HashMap<String, String>,
     pub raw_values: HashMap<String, String>,
     pub repeatable_instances: HashMap<String, Vec<String>>,
+    pub single_inputs: HashMap<String, Entity<InputState>>,
+    pub multi_inputs: HashMap<String, Entity<TextareaState>>,
+    pub language_selects: HashMap<String, Entity<SelectState<SearchableVec<SharedString>>>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ViewerSession {
@@ -21,65 +59,385 @@ impl ViewerSession {
         Self {
             prompt_id: "scratchpad".to_string(),
             title: "Scratchpad".to_string(),
+            source_parts: Vec::new(),
             session_parts: Vec::new(),
             values: HashMap::new(),
             languages: HashMap::new(),
             raw_values: HashMap::new(),
             repeatable_instances: HashMap::new(),
+            single_inputs: HashMap::new(),
+            multi_inputs: HashMap::new(),
+            language_selects: HashMap::new(),
+            _subscriptions: Vec::new(),
         }
     }
 
-    pub fn from_prompt(prompt: &Prompt) -> Self {
-        let mut values = HashMap::new();
-        let mut languages = HashMap::new();
-        let mut repeatable_instances = HashMap::new();
-
-        for part in &prompt.parts {
-            match part {
-                PromptPart::Custom {
-                    id, default_text, ..
-                } => {
-                    if let Some(default) = default_text {
-                        values.insert(id.clone(), default.clone());
-                    }
-                }
-                PromptPart::Code { id, language } => {
-                    if let Some(lang) = language {
-                        languages.insert(id.clone(), lang.clone());
-                    }
-                }
-                PromptPart::Repeatable { id, template_parts } => {
-                    let instance_id = "inst-1".to_string();
-                    for child in template_parts {
-                        let key = format!("{id}_{instance_id}_{}", child.id());
-                        match child {
-                            PromptPart::Custom { default_text, .. } => {
-                                if let Some(default) = default_text {
-                                    values.insert(key, default.clone());
-                                }
-                            }
-                            PromptPart::Code { language, .. } => {
-                                if let Some(lang) = language {
-                                    languages.insert(key, lang.clone());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    repeatable_instances.insert(id.clone(), vec![instance_id]);
-                }
-                _ => {}
-            }
-        }
-
-        Self {
+    pub fn from_prompt(
+        prompt: &Prompt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut session = Self {
             prompt_id: prompt.id.clone(),
             title: prompt.title.clone(),
+            source_parts: prompt.parts.clone(),
             session_parts: prompt.parts.clone(),
-            values,
-            languages,
+            values: HashMap::new(),
+            languages: HashMap::new(),
             raw_values: HashMap::new(),
-            repeatable_instances,
+            repeatable_instances: HashMap::new(),
+            single_inputs: HashMap::new(),
+            multi_inputs: HashMap::new(),
+            language_selects: HashMap::new(),
+            _subscriptions: Vec::new(),
+        };
+        session.init_all_controls(window, cx);
+        session
+    }
+
+    pub fn reset_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.session_parts = self.source_parts.clone();
+        self.values.clear();
+        self.languages.clear();
+        self.raw_values.clear();
+        self.repeatable_instances.clear();
+        self.single_inputs.clear();
+        self.multi_inputs.clear();
+        self.language_selects.clear();
+        self._subscriptions.clear();
+        self.init_all_controls(window, cx);
+        cx.notify();
+    }
+
+    fn init_all_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let parts = self.session_parts.clone();
+        for part in &parts {
+            self.init_part_controls(part, None, window, cx);
         }
+    }
+
+    fn init_part_controls(
+        &mut self,
+        part: &PromptPart,
+        parent_instance: Option<(&str, &str)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = match parent_instance {
+            Some((pid, iid)) => format!("{pid}_{iid}_{}", part.id()),
+            None => part.id().to_string(),
+        };
+
+        match part {
+            PromptPart::Custom {
+                default_text,
+                placeholder,
+                single_line,
+                ..
+            } => {
+                let def = default_text.clone().unwrap_or_default();
+                let ph = placeholder.clone().unwrap_or_default();
+                if !def.is_empty() {
+                    self.values.insert(key.clone(), def.clone());
+                }
+
+                if single_line.unwrap_or(false) {
+                    let input = cx.new(|cx| {
+                        let mut state = InputState::new(window, cx).placeholder(ph);
+                        if !def.is_empty() {
+                            state.set_value(def, window, cx);
+                        }
+                        state
+                    });
+                    let k = key.clone();
+                    let sub = cx.subscribe(&input, move |this, entity, event: &InputEvent, cx| {
+                        if matches!(event, InputEvent::Change) {
+                            let val = entity.read(cx).value().to_string();
+                            this.values.insert(k.clone(), val);
+                            cx.notify();
+                        }
+                    });
+                    self.single_inputs.insert(key, input);
+                    self._subscriptions.push(sub);
+                } else {
+                    let textarea = cx.new(|cx| {
+                        let mut state = TextareaState::new(window, cx).placeholder(ph);
+                        if !def.is_empty() {
+                            state.set_value(def, window, cx);
+                        }
+                        state
+                    });
+                    let k = key.clone();
+                    let sub =
+                        cx.subscribe(&textarea, move |this, entity, event: &InputEvent, cx| {
+                            if matches!(event, InputEvent::Change) {
+                                let val = entity.read(cx).value().to_string();
+                                this.values.insert(k.clone(), val);
+                                cx.notify();
+                            }
+                        });
+                    self.multi_inputs.insert(key, textarea);
+                    self._subscriptions.push(sub);
+                }
+            }
+            PromptPart::Quote { .. } => {
+                let textarea = cx.new(|cx| {
+                    TextareaState::new(window, cx).placeholder("Enter quote text...")
+                });
+                let k = key.clone();
+                let sub =
+                    cx.subscribe(&textarea, move |this, entity, event: &InputEvent, cx| {
+                        if matches!(event, InputEvent::Change) {
+                            let val = entity.read(cx).value().to_string();
+                            this.values.insert(k.clone(), val);
+                            cx.notify();
+                        }
+                    });
+                self.multi_inputs.insert(key, textarea);
+                self._subscriptions.push(sub);
+            }
+            PromptPart::Code { language, .. } => {
+                if let Some(lang) = language {
+                    self.languages.insert(key.clone(), lang.clone());
+                }
+
+                let textarea = cx.new(|cx| {
+                    TextareaState::new(window, cx).placeholder("Paste or type code...")
+                });
+                let k = key.clone();
+                let sub =
+                    cx.subscribe(&textarea, move |this, entity, event: &InputEvent, cx| {
+                        if matches!(event, InputEvent::Change) {
+                            let val = entity.read(cx).value().to_string();
+                            this.values.insert(k.clone(), val);
+                            cx.notify();
+                        }
+                    });
+                self.multi_inputs.insert(key.clone(), textarea);
+                self._subscriptions.push(sub);
+
+                // Language dropdown
+                let mut items: Vec<SharedString> = Vec::with_capacity(Language::ALL.len() + 1);
+                items.push(SharedString::from("None"));
+                for lang in Language::ALL {
+                    items.push(SharedString::from(lang.as_str()));
+                }
+                let selected_idx = language
+                    .as_deref()
+                    .and_then(|l| {
+                        Language::ALL
+                            .iter()
+                            .position(|cand| cand.as_str().eq_ignore_ascii_case(l))
+                            .map(|pos| IndexPath::default().row(pos + 1))
+                    })
+                    .unwrap_or_else(|| IndexPath::default().row(0));
+
+                let select = cx.new(|cx| {
+                    SelectState::new(SearchableVec::new(items), Some(selected_idx), window, cx)
+                });
+                let k_lang = key.clone();
+                let lang_sub = cx.subscribe(
+                    &select,
+                    move |this, _, event: &SelectEvent<SearchableVec<SharedString>>, cx| {
+                        if let SelectEvent::Confirm(Some(selected)) = event {
+                            if selected.as_ref() == "None" {
+                                this.languages.remove(&k_lang);
+                            } else {
+                                this.languages.insert(k_lang.clone(), selected.to_string());
+                            }
+                            cx.notify();
+                        }
+                    },
+                );
+                self.language_selects.insert(key, select);
+                self._subscriptions.push(lang_sub);
+            }
+            PromptPart::Repeatable { id, template_parts } => {
+                let instance_id = format!("inst-{}", Uuid::new_v4());
+                self.repeatable_instances
+                    .insert(id.clone(), vec![instance_id.clone()]);
+                for child in template_parts {
+                    self.init_part_controls(
+                        child,
+                        Some((id.as_str(), instance_id.as_str())),
+                        window,
+                        cx,
+                    );
+                }
+            }
+            PromptPart::Fixed { .. } | PromptPart::Heading { .. } | PromptPart::Hr { .. } => {}
+        }
+    }
+
+    pub fn has_temporary_sections(&self) -> bool {
+        self.session_parts
+            .iter()
+            .any(|p| p.id().starts_with("session_"))
+    }
+
+    pub fn add_temporary_section(
+        &mut self,
+        kind: TemporarySectionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = format!("session_{}", Uuid::new_v4());
+        let part = match kind {
+            TemporarySectionKind::Custom => PromptPart::Custom {
+                id,
+                default_text: None,
+                placeholder: Some("Enter custom text...".to_string()),
+                single_line: Some(false),
+            },
+            TemporarySectionKind::Quote => PromptPart::Quote { id },
+            TemporarySectionKind::Code => PromptPart::Code { id, language: None },
+            TemporarySectionKind::Hr => PromptPart::Hr { id },
+        };
+        self.init_part_controls(&part, None, window, cx);
+        self.session_parts.push(part);
+        cx.notify();
+    }
+
+    pub fn remove_part(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.session_parts.retain(|p| p.id() != id);
+        cx.notify();
+    }
+
+    pub fn reorder_part(&mut self, drag_id: &str, target_id: &str, cx: &mut Context<Self>) {
+        if drag_id == target_id {
+            return;
+        }
+        let Some(from) = self.session_parts.iter().position(|p| p.id() == drag_id) else {
+            return;
+        };
+        let Some(to) = self.session_parts.iter().position(|p| p.id() == target_id) else {
+            return;
+        };
+        let item = self.session_parts.remove(from);
+        self.session_parts.insert(to, item);
+        cx.notify();
+    }
+
+    pub fn add_repeatable_instance(
+        &mut self,
+        parent_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(PromptPart::Repeatable { template_parts, .. }) =
+            self.session_parts.iter().find(|p| p.id() == parent_id)
+        else {
+            return;
+        };
+        let template_parts = template_parts.clone();
+        let instance_id = format!("inst-{}", Uuid::new_v4());
+        self.repeatable_instances
+            .entry(parent_id.to_string())
+            .or_default()
+            .push(instance_id.clone());
+
+        for child in &template_parts {
+            self.init_part_controls(child, Some((parent_id, instance_id.as_str())), window, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn remove_repeatable_instance(
+        &mut self,
+        parent_id: &str,
+        instance_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(instances) = self.repeatable_instances.get_mut(parent_id)
+            && instances.len() > 1
+        {
+            instances.retain(|id| id != instance_id);
+            cx.notify();
+        }
+    }
+
+    /// Intercepts paste in a `Code` block, running `fix_indentation` and saving raw text
+    /// for one-click undo if indentation was modified. Returns `true` if handled.
+    pub fn apply_code_paste(
+        &mut self,
+        key: &str,
+        pasted: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let fixed = fix_indentation(pasted);
+        if fixed == pasted {
+            return false;
+        }
+        let Some(textarea) = self.multi_inputs.get(key).cloned() else {
+            return false;
+        };
+
+        // Compute the raw value by simulating inserting `pasted` into the current value,
+        // or if the buffer was empty, just `pasted.to_string()`.
+        let current = textarea.read(cx).value().to_string();
+        let raw_combined = if current.is_empty() {
+            pasted.to_string()
+        } else {
+            format!("{current}{pasted}")
+        };
+        self.raw_values.insert(key.to_string(), raw_combined);
+
+        textarea.update(cx, |state, cx| {
+            state.insert(fixed, window, cx);
+        });
+        let updated = textarea.read(cx).value().to_string();
+        self.values.insert(key.to_string(), updated);
+        cx.notify();
+        true
+    }
+
+    pub fn fix_code_indentation(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(textarea) = self.multi_inputs.get(key).cloned() else {
+            return;
+        };
+        let current = textarea.read(cx).value().to_string();
+        let fixed = fix_indentation(&current);
+        if fixed != current {
+            self.raw_values.insert(key.to_string(), current);
+            textarea.update(cx, |state, cx| {
+                state.set_value(fixed.clone(), window, cx);
+            });
+            self.values.insert(key.to_string(), fixed);
+            cx.notify();
+        }
+    }
+
+    pub fn reset_code_indentation(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(raw) = self.raw_values.remove(key) else {
+            return;
+        };
+        if let Some(textarea) = self.multi_inputs.get(key).cloned() {
+            textarea.update(cx, |state, cx| {
+                state.set_value(raw.clone(), window, cx);
+            });
+            self.values.insert(key.to_string(), raw);
+            cx.notify();
+        }
+    }
+
+    pub fn compile_sanitized(&self, disallowed_domains: &[String]) -> String {
+        let compiled = compile_prompt(
+            &self.session_parts,
+            &self.values,
+            &self.languages,
+            &self.repeatable_instances,
+        );
+        strip_disallowed_urls(&compiled, disallowed_domains)
     }
 }

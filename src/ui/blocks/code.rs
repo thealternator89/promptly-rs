@@ -65,3 +65,76 @@ pub fn render_code_editor(state: &CodeEditorState, cx: &App) -> AnyElement {
         .child(div().w(px(180.)).child(Select::new(&state.language_select).small()))
         .into_any_element()
 }
+
+pub fn render_code_viewer(
+    key: &str,
+    session_entity: &Entity<crate::model::ViewerSession>,
+    session: &crate::model::ViewerSession,
+) -> AnyElement {
+    use gpui_kit::component::{
+        button::Button,
+        input::Textarea,
+        v_flex,
+    };
+
+    let Some(textarea) = session.multi_inputs.get(key) else {
+        return div().into_any_element();
+    };
+    let Some(select_state) = session.language_selects.get(key) else {
+        return div().into_any_element();
+    };
+
+    let has_raw = session.raw_values.contains_key(key);
+    let key_owned = key.to_string();
+
+    v_flex()
+        .gap_2()
+        .child(
+            Textarea::new(textarea)
+                .h(px(140.))
+                .font_family("Menlo")
+                .on_paste({
+                    let session_entity = session_entity.clone();
+                    let k = key_owned.clone();
+                    move |clipboard, window, cx| {
+                        let Some(text) = clipboard.text() else {
+                            return false;
+                        };
+                        session_entity.update(cx, |sess, cx| {
+                            sess.apply_code_paste(&k, &text, window, cx)
+                        })
+                    }
+                }),
+        )
+        .child(
+            h_flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(div().w(px(170.)).child(Select::new(select_state).small()))
+                .child(
+                    Button::new(SharedString::from(format!("code-indent-{key_owned}")))
+                        .small()
+                        .outline()
+                        .label(if has_raw {
+                            "Reset Indentation"
+                        } else {
+                            "Fix Indentation"
+                        })
+                        .on_click({
+                            let session_entity = session_entity.clone();
+                            let k = key_owned;
+                            move |_, window, cx| {
+                                session_entity.update(cx, |sess, cx| {
+                                    if has_raw {
+                                        sess.reset_code_indentation(&k, window, cx);
+                                    } else {
+                                        sess.fix_code_indentation(&k, window, cx);
+                                    }
+                                });
+                            }
+                        }),
+                ),
+        )
+        .into_any_element()
+}

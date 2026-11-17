@@ -83,3 +83,16 @@ pub fn render_heading_editor(
         )
         .into_any_element()
 }
+
+pub fn render_heading_viewer(text: &str, level: u8) -> AnyElement {
+    use gpui_kit::component::StyledExt;
+    use gpui_kit::component::label::Label;
+
+    let label = Label::new(text.to_string()).font_bold();
+    let styled = match level {
+        1 => label.text_xl(),
+        2 => label.text_lg(),
+        _ => label.text_base(),
+    };
+    styled.into_any_element()
+}

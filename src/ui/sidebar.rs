@@ -253,9 +253,9 @@ impl Render for LibrarySidebar {
                             .on_click({
                                 let app = app.clone();
                                 let pid = prompt_id.clone();
-                                move |_, _, cx| {
+                                move |_, window, cx| {
                                     app.update(cx, |shell, cx| {
-                                        shell.select_prompt(pid.clone(), cx);
+                                        shell.select_prompt(pid.clone(), window, cx);
                                     });
                                 }
                             })

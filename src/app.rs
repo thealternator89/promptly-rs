@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use gpui_kit::component::{
     ActiveTheme as _, StyledExt, TitleBar, h_flex,
@@ -37,6 +38,8 @@ pub struct AppShell {
     pub sessions: HashMap<String, Entity<ViewerSession>>,
     pub sidebar: Entity<LibrarySidebar>,
     pub editor: Option<Entity<PromptEditor>>,
+    pub copied_to_clipboard: bool,
+    _copy_reset_task: Option<Task<()>>,
     pub status_message: Option<String>,
 }
 
@@ -72,7 +75,17 @@ impl AppShell {
             sessions,
             sidebar,
             editor: None,
+            copied_to_clipboard: false,
+            _copy_reset_task: None,
             status_message: None,
+        }
+    }
+
+    pub fn active_session(&self) -> Option<&Entity<ViewerSession>> {
+        match &self.active_target {
+            WorkspaceTarget::Scratchpad => self.sessions.get("scratchpad"),
+            WorkspaceTarget::SavedPrompt(id) => self.sessions.get(id),
+            WorkspaceTarget::NewPrompt => None,
         }
     }
 
@@ -87,11 +100,11 @@ impl AppShell {
         cx.notify();
     }
 
-    pub fn select_prompt(&mut self, id: String, cx: &mut Context<Self>) {
+    pub fn select_prompt(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(prompt) = self.prompts.iter().find(|p| p.id == id).cloned() {
             self.sessions
                 .entry(id.clone())
-                .or_insert_with(|| cx.new(|_| ViewerSession::from_prompt(&prompt)));
+                .or_insert_with(|| cx.new(|cx| ViewerSession::from_prompt(&prompt, window, cx)));
             self.active_target = WorkspaceTarget::SavedPrompt(id);
             self.workspace_mode = WorkspaceMode::Viewer;
             self.editor = None;
@@ -136,7 +149,12 @@ impl AppShell {
         cx.notify();
     }
 
-    pub fn save_edited_prompt(&mut self, prompt: Prompt, cx: &mut Context<Self>) {
+    pub fn save_edited_prompt(
+        &mut self,
+        prompt: Prompt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Err(err) = self.storage.save_prompt(&prompt) {
             self.status_message = Some(format!("Failed to save prompt: {err}"));
             cx.notify();
@@ -150,7 +168,7 @@ impl AppShell {
 
         let id = prompt.id.clone();
         self.sessions
-            .insert(id.clone(), cx.new(|_| ViewerSession::from_prompt(&prompt)));
+            .insert(id.clone(), cx.new(|cx| ViewerSession::from_prompt(&prompt, window, cx)));
         self.active_target = WorkspaceTarget::SavedPrompt(id);
         self.workspace_mode = WorkspaceMode::Viewer;
         self.editor = None;
@@ -206,6 +224,31 @@ impl AppShell {
         if let Err(err) = self.storage.save_prompts_order(&ids) {
             self.status_message = Some(format!("Failed to save prompt order: {err}"));
         }
+        cx.notify();
+    }
+
+    pub fn copy_compiled_prompt(&mut self, cx: &mut Context<Self>) {
+        let domains = self.settings.disallowed_domain_list();
+        let Some(session_entity) = self.active_session() else {
+            return;
+        };
+        let compiled = session_entity.read(cx).compile_sanitized(&domains);
+        cx.write_to_clipboard(ClipboardItem::new_string(compiled));
+
+        self.copied_to_clipboard = true;
+        self._copy_reset_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            let _ = this.update(cx, |shell, cx| {
+                shell.copied_to_clipboard = false;
+                shell._copy_reset_task = None;
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    pub fn request_save_to_library(&mut self, cx: &mut Context<Self>) {
+        self.status_message = Some("Add to Library modal coming in Phase 6.".to_string());
         cx.notify();
     }
 

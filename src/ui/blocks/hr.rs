@@ -7,3 +7,13 @@ pub fn render_hr_editor(cx: &App) -> AnyElement {
         .text_color(cx.theme().muted_foreground)
         .into_any_element()
 }
+
+pub fn render_hr_viewer(cx: &App) -> AnyElement {
+    use gpui_kit::component::ActiveTheme as _;
+
+    div()
+        .w_full()
+        .py_2()
+        .child(div().w_full().h(px(1.)).bg(cx.theme().border))
+        .into_any_element()
+}

@@ -71,3 +71,20 @@ pub fn render_custom_editor(
         )
         .into_any_element()
 }
+
+pub fn render_custom_viewer(
+    key: &str,
+    single_line: bool,
+    session: &crate::model::ViewerSession,
+) -> AnyElement {
+    use gpui_kit::component::input::Textarea;
+
+    if single_line {
+        if let Some(input) = session.single_inputs.get(key) {
+            return Input::new(input).into_any_element();
+        }
+    } else if let Some(textarea) = session.multi_inputs.get(key) {
+        return Textarea::new(textarea).h(px(96.)).into_any_element();
+    }
+    div().into_any_element()
+}

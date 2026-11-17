@@ -282,13 +282,13 @@ impl PromptEditor {
         })
     }
 
-    fn handle_save(&mut self, cx: &mut Context<Self>) {
+    fn handle_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.build_prompt(cx) {
             Ok(prompt) => {
                 self.validation_error = None;
                 if let Some(app) = self.app.upgrade() {
                     app.update(cx, |shell, cx| {
-                        shell.save_edited_prompt(prompt, cx);
+                        shell.save_edited_prompt(prompt, window, cx);
                     });
                 }
             }
@@ -421,8 +421,8 @@ impl Render for PromptEditor {
                                     .primary()
                                     .icon(Icon::new(IconName::Save))
                                     .label("Save Prompt")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.handle_save(cx);
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.handle_save(window, cx);
                                     })),
                             ),
                     ),

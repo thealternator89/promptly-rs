@@ -199,3 +199,114 @@ impl Render for DragChildPreview {
             )
     }
 }
+
+pub fn render_repeatable_viewer(
+    parent_id: &str,
+    template_parts: &[crate::model::PromptPart],
+    session_entity: &Entity<crate::model::ViewerSession>,
+    session: &crate::model::ViewerSession,
+    cx: &App,
+) -> AnyElement {
+    use crate::model::PromptPart;
+    use crate::services::compiler::composite_key;
+    use crate::ui::blocks::{
+        code::render_code_viewer, custom::render_custom_viewer, fixed::render_fixed_viewer,
+        heading::render_heading_viewer, hr::render_hr_viewer, quote::render_quote_viewer,
+    };
+    use gpui_kit::component::Disableable as _;
+    use gpui_kit::component::button::ButtonVariants as _;
+
+    let instances = session
+        .repeatable_instances
+        .get(parent_id)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let can_remove = instances.len() > 1;
+    let theme = cx.theme();
+    let border_color = theme.border;
+    let muted_fg = theme.muted_foreground;
+    let bg = theme.background;
+    let parent_id_owned = parent_id.to_string();
+
+    v_flex()
+        .gap_3()
+        .children(instances.iter().enumerate().map(|(idx, inst_id)| {
+            let inst_id_owned = inst_id.clone();
+            let pid = parent_id_owned.clone();
+
+            v_flex()
+                .p_3()
+                .rounded_md()
+                .bg(bg)
+                .border_1()
+                .border_color(border_color)
+                .gap_2p5()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            Label::new(format!("Instance #{}", idx + 1))
+                                .text_xs()
+                                .font_semibold()
+                                .text_color(muted_fg),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!(
+                                "remove-inst-{pid}-{inst_id_owned}"
+                            )))
+                            .xsmall()
+                            .ghost()
+                            .disabled(!can_remove)
+                            .icon(Icon::new(IconName::Trash))
+                            .on_click({
+                                let se = session_entity.clone();
+                                let pid = pid.clone();
+                                let iid = inst_id_owned.clone();
+                                move |_, _, cx| {
+                                    se.update(cx, |sess, cx| {
+                                        sess.remove_repeatable_instance(&pid, &iid, cx);
+                                    });
+                                }
+                            }),
+                        ),
+                )
+                .children(template_parts.iter().map(|child| {
+                    let key = composite_key(&pid, &inst_id_owned, child.id());
+                    match child {
+                        PromptPart::Heading { text, level, .. } => {
+                            render_heading_viewer(text, *level)
+                        }
+                        PromptPart::Fixed { text, .. } => render_fixed_viewer(text, cx),
+                        PromptPart::Custom { single_line, .. } => render_custom_viewer(
+                            &key,
+                            single_line.unwrap_or(false),
+                            session,
+                        ),
+                        PromptPart::Quote { .. } => render_quote_viewer(&key, session, cx),
+                        PromptPart::Code { .. } => {
+                            render_code_viewer(&key, session_entity, session)
+                        }
+                        PromptPart::Hr { .. } => render_hr_viewer(cx),
+                        PromptPart::Repeatable { .. } => div().into_any_element(),
+                    }
+                }))
+        }))
+        .child(
+            Button::new(SharedString::from(format!("add-inst-{parent_id_owned}")))
+                .small()
+                .outline()
+                .icon(Icon::new(IconName::Plus))
+                .label("Add another instance")
+                .on_click({
+                    let se = session_entity.clone();
+                    let pid = parent_id_owned;
+                    move |_, window, cx| {
+                        se.update(cx, |sess, cx| {
+                            sess.add_repeatable_instance(&pid, window, cx);
+                        });
+                    }
+                }),
+        )
+        .into_any_element()
+}
