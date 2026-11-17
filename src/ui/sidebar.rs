@@ -109,9 +109,9 @@ impl Render for LibrarySidebar {
                                             .label("Import")
                                             .on_click({
                                                 let app = app.clone();
-                                                move |_, _, cx| {
+                                                move |_, window, cx| {
                                                     app.update(cx, |shell, cx| {
-                                                        shell.request_import(cx);
+                                                        shell.request_import(window, cx);
                                                     });
                                                 }
                                             }),
@@ -336,9 +336,9 @@ impl Render for LibrarySidebar {
                             .label("Settings")
                             .on_click({
                                 let app = app.clone();
-                                move |_, _, cx| {
+                                move |_, window, cx| {
                                     app.update(cx, |shell, cx| {
-                                        shell.request_settings(cx);
+                                        shell.request_settings(window, cx);
                                     });
                                 }
                             }),

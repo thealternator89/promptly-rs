@@ -50,6 +50,17 @@ impl StorageService {
         &self.data_dir
     }
 
+    pub fn legacy_dirs(&self) -> &[PathBuf] {
+        &self.legacy_dirs
+    }
+
+    pub fn detected_legacy_dir(&self) -> Option<&Path> {
+        self.legacy_dirs
+            .iter()
+            .find(|p| p.is_dir())
+            .map(PathBuf::as_path)
+    }
+
     pub fn prompts_dir(&self) -> PathBuf {
         self.data_dir.join("prompts")
     }

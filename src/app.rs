@@ -8,9 +8,16 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
+use uuid::Uuid;
 
 use crate::model::{AppSettings, Prompt, ViewerSession};
 use crate::services::StorageService;
+use crate::ui::modals::{
+    export_modal::ExportModal,
+    import_modal::ImportModal,
+    save_modal::SaveToLibraryModal,
+    settings_modal::SettingsModal,
+};
 use crate::ui::sidebar::LibrarySidebar;
 use crate::ui::workspace::editor::PromptEditor;
 use crate::ui::workspace::{render_live_preview_pane, render_workspace_pane};
@@ -28,6 +35,13 @@ pub enum WorkspaceMode {
     Editor,
 }
 
+pub enum ActiveModal {
+    Import(Entity<ImportModal>),
+    Export(Entity<ExportModal>),
+    SaveToLibrary(Entity<SaveToLibraryModal>),
+    Settings(Entity<SettingsModal>),
+}
+
 pub struct AppShell {
     pub storage: StorageService,
     pub prompts: Vec<Prompt>,
@@ -38,6 +52,7 @@ pub struct AppShell {
     pub sessions: HashMap<String, Entity<ViewerSession>>,
     pub sidebar: Entity<LibrarySidebar>,
     pub editor: Option<Entity<PromptEditor>>,
+    pub active_modal: Option<ActiveModal>,
     pub copied_to_clipboard: bool,
     _copy_reset_task: Option<Task<()>>,
     pub status_message: Option<String>,
@@ -75,6 +90,7 @@ impl AppShell {
             sessions,
             sidebar,
             editor: None,
+            active_modal: None,
             copied_to_clipboard: false,
             _copy_reset_task: None,
             status_message: None,
@@ -247,19 +263,173 @@ impl AppShell {
         cx.notify();
     }
 
-    pub fn request_save_to_library(&mut self, cx: &mut Context<Self>) {
-        self.status_message = Some("Add to Library modal coming in Phase 6.".to_string());
+    pub fn close_modal(&mut self, cx: &mut Context<Self>) {
+        self.active_modal = None;
         cx.notify();
     }
 
-    pub fn request_import(&mut self, cx: &mut Context<Self>) {
-        self.status_message = Some("Import modal coming in Phase 6.".to_string());
+    pub fn request_save_to_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let default_title = match &self.active_target {
+            WorkspaceTarget::Scratchpad | WorkspaceTarget::NewPrompt => String::new(),
+            WorkspaceTarget::SavedPrompt(id) => self
+                .prompts
+                .iter()
+                .find(|p| &p.id == id)
+                .map(|p| format!("{} (Copy)", p.title))
+                .unwrap_or_default(),
+        };
+        let weak = cx.weak_entity();
+        let modal = cx.new(|cx| SaveToLibraryModal::new(weak, default_title, window, cx));
+        self.active_modal = Some(ActiveModal::SaveToLibrary(modal));
         cx.notify();
     }
 
-    pub fn request_settings(&mut self, cx: &mut Context<Self>) {
-        self.status_message = Some("Settings modal coming in Phase 6.".to_string());
+    pub fn promote_active_session_to_library(
+        &mut self,
+        title: String,
+        description: String,
+        cx: &mut Context<Self>,
+    ) {
+        let source_key = match &self.active_target {
+            WorkspaceTarget::Scratchpad => "scratchpad".to_string(),
+            WorkspaceTarget::SavedPrompt(id) => id.clone(),
+            WorkspaceTarget::NewPrompt => return,
+        };
+
+        let Some(session_entity) = self.sessions.get(&source_key).cloned() else {
+            return;
+        };
+
+        let new_id = Uuid::new_v4().to_string();
+        let promoted_parts = session_entity.update(cx, |sess, cx| {
+            sess.promote_to_permanent_parts(&new_id, &title, cx)
+        });
+
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let prompt = Prompt {
+            id: new_id.clone(),
+            title: title.clone(),
+            description,
+            created_at,
+            parts: promoted_parts,
+        };
+
+        if let Err(err) = self.storage.save_prompt(&prompt) {
+            self.status_message = Some(format!("Failed to save prompt: {err}"));
+            cx.notify();
+            return;
+        }
+
+        // Transfer session to the new prompt ID (and reset Scratchpad if promoted from Scratchpad)
+        if source_key == "scratchpad" {
+            self.sessions
+                .insert("scratchpad".to_string(), cx.new(|_| ViewerSession::scratchpad()));
+        }
+        self.sessions.insert(new_id.clone(), session_entity);
+
+        self.prompts = self
+            .storage
+            .load_prompts()
+            .unwrap_or_else(|_| self.prompts.clone());
+        self.active_target = WorkspaceTarget::SavedPrompt(new_id);
+        self.workspace_mode = WorkspaceMode::Viewer;
+        self.active_modal = None;
+        self.status_message = Some(format!("Added \"{title}\" to Library"));
         cx.notify();
+    }
+
+    pub fn request_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak = cx.weak_entity();
+        let modal = cx.new(|cx| ImportModal::new(weak, window, cx));
+        self.active_modal = Some(ActiveModal::Import(modal));
+        cx.notify();
+    }
+
+    pub fn finish_import_prompt(
+        &mut self,
+        prompt: Prompt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(err) = self.storage.save_prompt(&prompt) {
+            self.status_message = Some(format!("Failed to save imported prompt: {err}"));
+            cx.notify();
+            return;
+        }
+        self.prompts = self
+            .storage
+            .load_prompts()
+            .unwrap_or_else(|_| self.prompts.clone());
+        let id = prompt.id.clone();
+        self.sessions
+            .insert(id.clone(), cx.new(|cx| ViewerSession::from_prompt(&prompt, window, cx)));
+        self.active_target = WorkspaceTarget::SavedPrompt(id);
+        self.workspace_mode = WorkspaceMode::Viewer;
+        self.editor = None;
+        self.active_modal = None;
+        self.status_message = Some(format!("Imported \"{}\"", prompt.title));
+        cx.notify();
+    }
+
+    pub fn open_export_modal(
+        &mut self,
+        json: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let weak = cx.weak_entity();
+        let modal = cx.new(|cx| ExportModal::new(weak, json, window, cx));
+        self.active_modal = Some(ActiveModal::Export(modal));
+        cx.notify();
+    }
+
+    pub fn request_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak = cx.weak_entity();
+        let settings = self.settings.clone();
+        let legacy_path = self
+            .storage
+            .detected_legacy_dir()
+            .map(|p| p.display().to_string());
+        let modal = cx.new(|cx| SettingsModal::new(weak, &settings, legacy_path, window, cx));
+        self.active_modal = Some(ActiveModal::Settings(modal));
+        cx.notify();
+    }
+
+    pub fn save_settings_and_close(&mut self, settings: AppSettings, cx: &mut Context<Self>) {
+        if let Err(err) = self.storage.save_settings(&settings) {
+            self.status_message = Some(format!("Failed to save settings: {err}"));
+            cx.notify();
+            return;
+        }
+        self.settings = settings;
+        self.active_modal = None;
+        self.status_message = Some("Settings saved.".to_string());
+        cx.notify();
+    }
+
+    pub fn rerun_legacy_migration(&mut self, cx: &mut Context<Self>) -> String {
+        let Some(legacy_dir) = self.storage.detected_legacy_dir().map(|p| p.to_path_buf()) else {
+            return "No legacy Electron directory found.".to_string();
+        };
+        match self.storage.migrate_from_directory(&legacy_dir) {
+            Ok(report) => {
+                self.prompts = self
+                    .storage
+                    .load_prompts()
+                    .unwrap_or_else(|_| self.prompts.clone());
+                self.settings = self.storage.load_settings().unwrap_or_default();
+                cx.notify();
+                format!(
+                    "Migrated {} prompt(s), settings: {}, order: {}.",
+                    report.prompts_copied, report.settings_copied, report.order_copied
+                )
+            }
+            Err(err) => format!("Migration failed: {err}"),
+        }
     }
 }
 
@@ -277,7 +447,15 @@ impl Render for AppShell {
         let workspace_pane = render_workspace_pane(self, cx);
         let preview_pane = render_live_preview_pane(self, cx);
 
+        let modal_overlay = self.active_modal.as_ref().map(|m| match m {
+            ActiveModal::Import(e) => e.clone().into_any_element(),
+            ActiveModal::Export(e) => e.clone().into_any_element(),
+            ActiveModal::SaveToLibrary(e) => e.clone().into_any_element(),
+            ActiveModal::Settings(e) => e.clone().into_any_element(),
+        });
+
         v_flex()
+            .relative()
             .size_full()
             .bg(bg)
             // Custom Titlebar
@@ -333,5 +511,6 @@ impl Render for AppShell {
                         el.child(Label::new(msg).text_xs().text_color(muted_fg))
                     }),
             )
+            .when_some(modal_overlay, |el, modal| el.child(modal))
     }
 }

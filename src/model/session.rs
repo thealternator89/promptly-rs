@@ -440,4 +440,121 @@ impl ViewerSession {
         );
         strip_disallowed_urls(&compiled, disallowed_domains)
     }
+
+    /// Converts `session_` temporary IDs to permanent `part_` IDs, stores current `Custom`
+    /// values as their new `default_text`, and updates this session in-place so no typed
+    /// inputs or repeatable instances are lost when promoting to a saved Prompt.
+    pub fn promote_to_permanent_parts(
+        &mut self,
+        new_prompt_id: &str,
+        new_title: &str,
+        cx: &mut Context<Self>,
+    ) -> Vec<PromptPart> {
+        let mut id_map: HashMap<String, String> = HashMap::new();
+        for part in &mut self.session_parts {
+            let old_id = part.id().to_string();
+            if old_id.starts_with("session_") {
+                let new_id = format!("part_{}", Uuid::new_v4());
+                id_map.insert(old_id, new_id.clone());
+                set_part_id(part, new_id);
+            }
+        }
+
+        for (old_id, new_id) in &id_map {
+            if let Some(v) = self.values.remove(old_id) {
+                self.values.insert(new_id.clone(), v);
+            }
+            if let Some(v) = self.languages.remove(old_id) {
+                self.languages.insert(new_id.clone(), v);
+            }
+            if let Some(v) = self.raw_values.remove(old_id) {
+                self.raw_values.insert(new_id.clone(), v);
+            }
+            if let Some(e) = self.single_inputs.remove(old_id) {
+                self.single_inputs.insert(new_id.clone(), e);
+            }
+            if let Some(e) = self.multi_inputs.remove(old_id) {
+                self.multi_inputs.insert(new_id.clone(), e);
+            }
+            if let Some(e) = self.language_selects.remove(old_id) {
+                self.language_selects.insert(new_id.clone(), e);
+            }
+        }
+
+        // Re-bind subscriptions so future edits write to the new permanent keys
+        if !id_map.is_empty() {
+            self._subscriptions.clear();
+            for (k, input) in &self.single_inputs {
+                let key = k.clone();
+                let sub = cx.subscribe(input, move |this, entity, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        let val = entity.read(cx).value().to_string();
+                        this.values.insert(key.clone(), val);
+                        cx.notify();
+                    }
+                });
+                self._subscriptions.push(sub);
+            }
+            for (k, textarea) in &self.multi_inputs {
+                let key = k.clone();
+                let sub = cx.subscribe(textarea, move |this, entity, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        let val = entity.read(cx).value().to_string();
+                        this.values.insert(key.clone(), val);
+                        cx.notify();
+                    }
+                });
+                self._subscriptions.push(sub);
+            }
+            for (k, select) in &self.language_selects {
+                let key = k.clone();
+                let sub = cx.subscribe(
+                    select,
+                    move |this, _, event: &SelectEvent<SearchableVec<SharedString>>, cx| {
+                        if let SelectEvent::Confirm(Some(selected)) = event {
+                            if selected.as_ref() == "None" {
+                                this.languages.remove(&key);
+                            } else {
+                                this.languages.insert(key.clone(), selected.to_string());
+                            }
+                            cx.notify();
+                        }
+                    },
+                );
+                self._subscriptions.push(sub);
+            }
+        }
+
+        // Persist current Custom field values as their new default_text
+        for part in &mut self.session_parts {
+            if let PromptPart::Custom {
+                id, default_text, ..
+            } = part
+            {
+                *default_text = self
+                    .values
+                    .get(id)
+                    .filter(|s| !s.is_empty())
+                    .cloned();
+            }
+        }
+
+        self.prompt_id = new_prompt_id.to_string();
+        self.title = new_title.to_string();
+        self.source_parts = self.session_parts.clone();
+        cx.notify();
+        self.session_parts.clone()
+    }
+}
+
+fn set_part_id(part: &mut PromptPart, new_id: String) {
+    match part {
+        PromptPart::Fixed { id, .. }
+        | PromptPart::Heading { id, .. }
+        | PromptPart::Custom { id, .. }
+        | PromptPart::Quote { id }
+        | PromptPart::Code { id, .. }
+        | PromptPart::Hr { id }
+        | PromptPart::Repeatable { id, .. } => *id = new_id,
+    }
 }

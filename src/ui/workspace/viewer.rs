@@ -99,8 +99,8 @@ pub fn render_viewer_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> A
                                 .disabled(!has_temp)
                                 .icon(Icon::new(IconName::BookmarkPlus))
                                 .label("Add to Library")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.request_save_to_library(cx);
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.request_save_to_library(window, cx);
                                 })),
                         )
                         .when(is_saved_prompt, |el| {

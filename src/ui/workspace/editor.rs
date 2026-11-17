@@ -336,12 +336,30 @@ impl PromptEditor {
         }
     }
 
-    fn handle_export(&mut self, cx: &mut Context<Self>) {
-        if let Some(app) = self.app.upgrade() {
-            app.update(cx, |shell, cx| {
-                shell.status_message = Some("Export modal coming in Phase 6.".to_string());
+    fn handle_export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let prompt = Prompt {
+            id: self
+                .editing_prompt_id
+                .clone()
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            title: self.title_input.read(cx).value().to_string(),
+            description: self.description_input.read(cx).value().to_string(),
+            created_at: self.created_at.unwrap_or(0),
+            parts: self.parts.iter().map(|p| p.to_prompt_part(cx)).collect(),
+        };
+
+        match serde_json::to_string_pretty(&prompt) {
+            Ok(json) => {
+                if let Some(app) = self.app.upgrade() {
+                    app.update(cx, |shell, cx| {
+                        shell.open_export_modal(json, window, cx);
+                    });
+                }
+            }
+            Err(err) => {
+                self.validation_error = Some(format!("Failed to serialize prompt: {err}"));
                 cx.notify();
-            });
+            }
         }
     }
 }
@@ -396,8 +414,8 @@ impl Render for PromptEditor {
                                         .outline()
                                         .icon(Icon::new(IconName::Download))
                                         .label("Export")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.handle_export(cx);
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.handle_export(window, cx);
                                         })),
                                 )
                                 .child(
