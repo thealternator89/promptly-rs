@@ -1,4 +1,5 @@
 pub mod app;
+pub mod branding;
 pub mod model;
 pub mod services;
 pub mod ui;
@@ -7,12 +8,17 @@ use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
 use crate::app::AppShell;
+use crate::branding::AppAssets;
 
 fn main() {
     application()
-        .with_assets(assets::AllAssets)
+        .with_assets(AppAssets)
         .run(|cx| {
             init(cx);
+            branding::set_app_dock_icon();
+
+            let mut titlebar = TitleBar::title_bar_options();
+            titlebar.title = Some("Promptly".into());
 
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -20,6 +26,8 @@ fn main() {
                     size(px(1366.), px(768.)),
                     cx,
                 ))),
+                titlebar: Some(titlebar),
+                app_id: Some("Promptly".to_string()),
                 ..TitleBar::window_options()
             };
 

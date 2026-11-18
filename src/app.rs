@@ -462,6 +462,11 @@ impl Render for AppShell {
                     h_flex()
                         .items_center()
                         .gap_2()
+                        .child(
+                            img(crate::branding::icon_image())
+                                .size(px(18.))
+                                .flex_shrink_0(),
+                        )
                         .child(Label::new("Promptly").text_sm().font_semibold()),
                 ),
             )
