@@ -67,8 +67,8 @@ pub fn render_viewer_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> A
     let body_content = v_flex()
         .size_full()
         .overflow_y_scrollbar()
-        .p_5()
-        .gap_3()
+        .p_4()
+        .gap_2()
         .when(parts.is_empty(), |el| {
             el.child(
                 div()

@@ -451,8 +451,8 @@ impl Render for PromptEditor {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scrollbar()
-                    .p_5()
-                    .gap_4()
+                    .p_4()
+                    .gap_3()
                     .when_some(self.validation_error.clone(), |el, err| {
                         el.child(
                             div()
@@ -497,7 +497,7 @@ impl Render for PromptEditor {
                     // Blocks List
                     .child(
                         v_flex()
-                            .gap_3()
+                            .gap_2()
                             .when(self.parts.is_empty(), |el| {
                                 el.child(
                                     div()

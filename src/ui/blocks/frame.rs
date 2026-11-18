@@ -70,76 +70,65 @@ impl RenderOnce for BlockFrame {
         let bg = if self.is_nested {
             theme.background
         } else {
-            theme.secondary
+            theme.secondary.opacity(0.45)
         };
-        let border_color = theme.border;
+        let border_color = theme.border.opacity(0.55);
         let muted_fg = theme.muted_foreground;
-        let badge_bg = if self.is_nested {
-            theme.secondary
-        } else {
-            theme.background
-        };
 
         v_flex()
             .id(self.id.clone())
             .w_full()
-            .rounded_lg()
+            .rounded_md()
             .bg(bg)
             .border_1()
             .border_color(border_color)
-            .p_3()
-            .gap_2p5()
-            // Header bar: drag handle + type badge + remove button
+            .px_3()
+            .py_2()
+            .gap_1p5()
+            // Compact, low-contrast header bar
             .child(
                 h_flex()
                     .items_center()
                     .justify_between()
-                    .gap_2()
+                    .gap_1p5()
                     .child(
                         h_flex()
                             .items_center()
-                            .gap_2()
+                            .gap_1p5()
                             .when(self.show_drag_handle, |el| {
                                 el.child(
                                     div()
                                         .cursor_grab()
-                                        .text_color(muted_fg)
-                                        .child(Icon::new(IconName::GripVertical).small()),
+                                        .text_color(muted_fg.opacity(0.55))
+                                        .hover(|s| s.text_color(muted_fg))
+                                        .child(Icon::new(IconName::GripVertical).xsmall()),
                                 )
                             })
                             .child(
-                                div()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_sm()
-                                    .bg(badge_bg)
-                                    .border_1()
-                                    .border_color(border_color)
-                                    .child(
-                                        Label::new(self.badge)
-                                            .text_xs()
-                                            .font_semibold()
-                                            .text_color(if self.is_nested {
-                                                muted_fg
-                                            } else {
-                                                theme.foreground
-                                            }),
-                                    ),
+                                Label::new(self.badge)
+                                    .text_xs()
+                                    .font_medium()
+                                    .text_color(muted_fg.opacity(0.75)),
                             ),
                     )
                     .when(self.show_remove, |el| {
                         let remove_id = ElementId::Name(format!("{}-remove", self.id).into());
                         let on_remove = self.on_remove.clone();
                         el.child(
-                            Button::new(remove_id)
-                                .xsmall()
-                                .ghost()
-                                .icon(Icon::new(IconName::Trash))
-                                .on_click(move |ev, window, cx| {
-                                    if let Some(cb) = &on_remove {
-                                        cb(ev, window, cx);
-                                    }
-                                }),
+                            div()
+                                .opacity(0.4)
+                                .hover(|s| s.opacity(1.0))
+                                .child(
+                                    Button::new(remove_id)
+                                        .xsmall()
+                                        .ghost()
+                                        .icon(Icon::new(IconName::Trash))
+                                        .on_click(move |ev, window, cx| {
+                                            if let Some(cb) = &on_remove {
+                                                cb(ev, window, cx);
+                                            }
+                                        }),
+                                ),
                         )
                     }),
             )
