@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Icon, Sizable as _, StyledExt,
+    ActiveTheme as _, Icon, Sizable as _, StyledExt,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Textarea, TextareaState},
@@ -90,7 +90,7 @@ impl Render for ExportModal {
             .child(
                 Textarea::new(&self.json_textarea)
                     .h(px(280.))
-                    .font_family("Menlo"),
+                    .font_family(cx.theme().mono_font_family.clone()),
             )
             .child(
                 h_flex()

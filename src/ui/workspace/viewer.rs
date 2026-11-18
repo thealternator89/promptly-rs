@@ -102,7 +102,7 @@ pub fn render_viewer_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> A
                 }
                 PromptPart::Quote { .. } => render_quote_viewer(&part_id, session, cx),
                 PromptPart::Code { .. } => {
-                    render_code_viewer(&part_id, &session_entity, session)
+                    render_code_viewer(&part_id, &session_entity, session, cx)
                 }
                 PromptPart::Hr { .. } => render_hr_viewer(cx),
                 PromptPart::Repeatable { template_parts, .. } => render_repeatable_viewer(

@@ -76,7 +76,7 @@ pub fn render_live_preview_pane(shell: &AppShell, cx: &mut Context<AppShell>) ->
                         .bg(theme.secondary)
                         .border_1()
                         .border_color(border_color)
-                        .font_family("Menlo")
+                        .font_family(theme.mono_font_family.clone())
                         .child(
                             Label::new(if compiled.is_empty() {
                                 "(Compiled prompt is empty)".to_string()

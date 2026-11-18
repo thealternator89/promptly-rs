@@ -110,7 +110,7 @@ impl Render for ImportModal {
             .child(
                 Textarea::new(&self.json_input)
                     .h(px(240.))
-                    .font_family("Menlo"),
+                    .font_family(theme.mono_font_family.clone()),
             )
             .child(
                 h_flex()

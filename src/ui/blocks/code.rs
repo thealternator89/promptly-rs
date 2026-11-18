@@ -70,6 +70,7 @@ pub fn render_code_viewer(
     key: &str,
     session_entity: &Entity<crate::model::ViewerSession>,
     session: &crate::model::ViewerSession,
+    cx: &App,
 ) -> AnyElement {
     use gpui_kit::component::{
         button::Button,
@@ -92,7 +93,7 @@ pub fn render_code_viewer(
         .child(
             Textarea::new(textarea)
                 .h(px(140.))
-                .font_family("Menlo")
+                .font_family(cx.theme().mono_font_family.clone())
                 .on_paste({
                     let session_entity = session_entity.clone();
                     let k = key_owned.clone();

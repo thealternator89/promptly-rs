@@ -112,7 +112,7 @@ impl Render for SettingsModal {
                     .child(
                         Textarea::new(&self.domains_input)
                             .h(px(140.))
-                            .font_family("Menlo"),
+                            .font_family(theme.mono_font_family.clone()),
                     ),
             )
             // Legacy Data Migration

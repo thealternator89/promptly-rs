@@ -288,7 +288,7 @@ pub fn render_repeatable_viewer(
                         ),
                         PromptPart::Quote { .. } => render_quote_viewer(&key, session, cx),
                         PromptPart::Code { .. } => {
-                            render_code_viewer(&key, session_entity, session)
+                            render_code_viewer(&key, session_entity, session, cx)
                         }
                         PromptPart::Hr { .. } => render_hr_viewer(cx),
                         PromptPart::Repeatable { .. } => div().into_any_element(),
