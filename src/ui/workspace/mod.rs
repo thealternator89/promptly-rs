@@ -9,12 +9,16 @@ use crate::app::{AppShell, WorkspaceMode};
 pub use preview::render_live_preview_pane;
 
 /// Renders the center workspace pane, switching between `PromptEditor` and `PromptViewer`.
-pub fn render_workspace_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> AnyElement {
+pub fn render_workspace_pane(
+    shell: &mut AppShell,
+    window: &mut Window,
+    cx: &mut Context<AppShell>,
+) -> AnyElement {
     if shell.workspace_mode == WorkspaceMode::Editor
         && let Some(editor) = &shell.editor
     {
         return editor.clone().into_any_element();
     }
 
-    viewer::render_viewer_pane(shell, cx)
+    viewer::render_viewer_pane(shell, window, cx)
 }

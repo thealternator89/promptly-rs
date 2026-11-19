@@ -43,7 +43,11 @@ fn part_badge(part: &PromptPart) -> &'static str {
     }
 }
 
-pub fn render_viewer_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> AnyElement {
+pub fn render_viewer_pane(
+    shell: &mut AppShell,
+    window: &mut Window,
+    cx: &mut Context<AppShell>,
+) -> AnyElement {
     let Some(session_entity) = shell.active_session().cloned() else {
         return v_flex().size_full().into_any_element();
     };
@@ -188,7 +192,7 @@ pub fn render_viewer_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> A
                 ),
         );
 
-    let preview_pane = render_live_preview_pane(shell, cx);
+    let preview_pane = render_live_preview_pane(shell, window, cx);
 
     v_flex()
         .size_full()

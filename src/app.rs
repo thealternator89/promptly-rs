@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use gpui_kit::component::{
     ActiveTheme as _, StyledExt, TitleBar, h_flex,
+    input::TextareaState,
     label::Label,
     resizable::{h_resizable, resizable_panel},
     v_flex,
@@ -53,6 +54,8 @@ pub struct AppShell {
     pub sidebar: Entity<LibrarySidebar>,
     pub editor: Option<Entity<PromptEditor>>,
     pub active_modal: Option<ActiveModal>,
+    pub preview_textarea: Entity<TextareaState>,
+    preview_text_cache: String,
     pub copied_to_clipboard: bool,
     _copy_reset_task: Option<Task<()>>,
     pub status_message: Option<String>,
@@ -79,6 +82,9 @@ impl AppShell {
 
         let weak_self = cx.weak_entity();
         let sidebar = cx.new(|cx| LibrarySidebar::new(weak_self, window, cx));
+        let preview_textarea = cx.new(|cx| {
+            TextareaState::new(window, cx).placeholder("(Compiled prompt is empty)")
+        });
 
         Self {
             storage,
@@ -91,10 +97,28 @@ impl AppShell {
             sidebar,
             editor: None,
             active_modal: None,
+            preview_textarea,
+            preview_text_cache: String::new(),
             copied_to_clipboard: false,
             _copy_reset_task: None,
             status_message: None,
         }
+    }
+
+    pub fn sync_preview_textarea(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.preview_text_cache == text {
+            return;
+        }
+        self.preview_text_cache = text.to_string();
+        let value = self.preview_text_cache.clone();
+        self.preview_textarea.update(cx, |state, cx| {
+            state.set_value(value, window, cx);
+        });
     }
 
     pub fn active_session(&self) -> Option<&Entity<ViewerSession>> {
@@ -434,7 +458,7 @@ impl AppShell {
 }
 
 impl Render for AppShell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let bg = theme.background;
         let border_color = theme.border;
@@ -443,7 +467,7 @@ impl Render for AppShell {
         let prompt_count = self.prompts.len();
         let status_message = self.status_message.clone();
 
-        let workspace_pane = render_workspace_pane(self, cx);
+        let workspace_pane = render_workspace_pane(self, window, cx);
 
         let modal_overlay = self.active_modal.as_ref().map(|m| match m {
             ActiveModal::Import(e) => e.clone().into_any_element(),

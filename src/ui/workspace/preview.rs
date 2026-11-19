@@ -3,8 +3,8 @@ use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, StyledExt,
     button::Button,
     h_flex,
+    input::Textarea,
     label::Label,
-    scroll::ScrollableElement as _,
     v_flex,
 };
 use gpui_kit::*;
@@ -12,17 +12,25 @@ use gpui_kit::*;
 use crate::app::AppShell;
 
 /// Renders the right-hand Live Preview pane with compiled and sanitized Markdown output.
-pub fn render_live_preview_pane(shell: &AppShell, cx: &mut Context<AppShell>) -> AnyElement {
-    let theme = cx.theme();
-    let border_color = theme.border;
-    let muted_fg = theme.muted_foreground;
-    let copied = shell.copied_to_clipboard;
-
+pub fn render_live_preview_pane(
+    shell: &mut AppShell,
+    window: &mut Window,
+    cx: &mut Context<AppShell>,
+) -> AnyElement {
     let domains = shell.settings.disallowed_domain_list();
     let compiled = shell
         .active_session()
         .map(|se| se.read(cx).compile_sanitized(&domains))
         .unwrap_or_default();
+
+    shell.sync_preview_textarea(&compiled, window, cx);
+
+    let theme = cx.theme();
+    let border_color = theme.border;
+    let muted_fg = theme.muted_foreground;
+    let secondary_bg = theme.secondary;
+    let mono_font = theme.mono_font_family.clone();
+    let copied = shell.copied_to_clipboard;
 
     v_flex()
         .size_full()
@@ -66,26 +74,15 @@ pub fn render_live_preview_pane(shell: &AppShell, cx: &mut Context<AppShell>) ->
             v_flex()
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scrollbar()
                 .p_4()
                 .child(
-                    div()
-                        .w_full()
-                        .p_3()
-                        .rounded_md()
-                        .bg(theme.secondary)
-                        .border_1()
-                        .border_color(border_color)
-                        .font_family(theme.mono_font_family.clone())
-                        .child(
-                            Label::new(if compiled.is_empty() {
-                                "(Compiled prompt is empty)".to_string()
-                            } else {
-                                compiled
-                            })
-                            .text_xs()
-                            .text_color(theme.foreground),
-                        ),
+                    Textarea::new(&shell.preview_textarea)
+                        .readonly(true)
+                        .flex_1()
+                        .min_h_0()
+                        .bg(secondary_bg)
+                        .text_xs()
+                        .font_family(mono_font),
                 ),
         )
         .into_any_element()
