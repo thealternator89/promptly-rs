@@ -161,7 +161,9 @@ impl ViewerSession {
                     self._subscriptions.push(sub);
                 } else {
                     let textarea = cx.new(|cx| {
-                        let mut state = TextareaState::new(window, cx).placeholder(ph);
+                        let mut state = TextareaState::new(window, cx)
+                            .auto_grow(3, usize::MAX)
+                            .placeholder(ph);
                         if !def.is_empty() {
                             state.set_value(def, window, cx);
                         }
@@ -182,7 +184,9 @@ impl ViewerSession {
             }
             PromptPart::Quote { .. } => {
                 let textarea = cx.new(|cx| {
-                    TextareaState::new(window, cx).placeholder("Enter quote text...")
+                    TextareaState::new(window, cx)
+                        .auto_grow(3, usize::MAX)
+                        .placeholder("Enter quote text...")
                 });
                 let k = key.clone();
                 let sub =
@@ -202,7 +206,9 @@ impl ViewerSession {
                 }
 
                 let textarea = cx.new(|cx| {
-                    TextareaState::new(window, cx).placeholder("Paste or type code...")
+                    TextareaState::new(window, cx)
+                        .auto_grow(5, usize::MAX)
+                        .placeholder("Paste or type code...")
                 });
                 let k = key.clone();
                 let sub =

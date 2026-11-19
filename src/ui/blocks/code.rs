@@ -74,7 +74,6 @@ pub fn render_code_viewer(
 ) -> AnyElement {
     use gpui_kit::component::{
         button::Button,
-        input::Textarea,
         v_flex,
     };
 
@@ -87,26 +86,25 @@ pub fn render_code_viewer(
 
     let has_raw = session.raw_values.contains_key(key);
     let key_owned = key.to_string();
+    let paste_key = key_owned.clone();
+    let mono_font = cx.theme().mono_font_family.clone();
 
     v_flex()
         .gap_2()
-        .child(
-            Textarea::new(textarea)
-                .h(px(140.))
-                .font_family(cx.theme().mono_font_family.clone())
-                .on_paste({
-                    let session_entity = session_entity.clone();
-                    let k = key_owned.clone();
-                    move |clipboard, window, cx| {
-                        let Some(text) = clipboard.text() else {
-                            return false;
-                        };
-                        session_entity.update(cx, |sess, cx| {
-                            sess.apply_code_paste(&k, &text, window, cx)
-                        })
-                    }
-                }),
-        )
+        .child(super::tab_textarea(textarea, move |t| {
+            t.font_family(mono_font).on_paste({
+                let session_entity = session_entity.clone();
+                let k = paste_key;
+                move |clipboard, window, cx| {
+                    let Some(text) = clipboard.text() else {
+                        return false;
+                    };
+                    session_entity.update(cx, |sess, cx| {
+                        sess.apply_code_paste(&k, &text, window, cx)
+                    })
+                }
+            })
+        }))
         .child(
             h_flex()
                 .items_center()

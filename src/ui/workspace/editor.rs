@@ -5,7 +5,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, StyledExt,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputState, Textarea, TextareaState},
+    input::{Input, InputState, TextareaState},
     label::Label,
     scroll::ScrollableElement as _,
     v_flex,
@@ -49,7 +49,9 @@ impl PromptEditor {
         let title_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Prompt title (required)..."));
         let description_input = cx.new(|cx| {
-            TextareaState::new(window, cx).placeholder("Short description (optional)...")
+            TextareaState::new(window, cx)
+                .auto_grow(2, usize::MAX)
+                .placeholder("Short description (optional)...")
         });
 
         Self {
@@ -81,6 +83,7 @@ impl PromptEditor {
         });
         let description_input = cx.new(|cx| {
             let mut state = TextareaState::new(window, cx)
+                .auto_grow(2, usize::MAX)
                 .placeholder("Short description (optional)...");
             state.set_value(desc, window, cx);
             state
@@ -491,7 +494,7 @@ impl Render for PromptEditor {
                                     .child(
                                         Label::new("Description").text_xs().text_color(muted_fg),
                                     )
-                                    .child(Textarea::new(&self.description_input).h(px(72.))),
+                                    .child(crate::ui::blocks::tab_textarea(&self.description_input, |t| t)),
                             ),
                     )
                     // Blocks List

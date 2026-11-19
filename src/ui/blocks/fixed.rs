@@ -1,4 +1,4 @@
-use gpui_kit::component::input::{Textarea, TextareaState};
+use gpui_kit::component::input::TextareaState;
 use gpui_kit::*;
 
 pub struct FixedEditorState {
@@ -11,6 +11,7 @@ impl FixedEditorState {
         let initial = text.to_string();
         let text_input = cx.new(|cx| {
             let mut state = TextareaState::new(window, cx)
+                .auto_grow(3, usize::MAX)
                 .placeholder("Enter static boilerplate text...");
             state.set_value(initial, window, cx);
             state
@@ -20,9 +21,7 @@ impl FixedEditorState {
 }
 
 pub fn render_fixed_editor(state: &FixedEditorState) -> AnyElement {
-    Textarea::new(&state.text_input)
-        .h(px(96.))
-        .into_any_element()
+    super::tab_textarea(&state.text_input, |t| t)
 }
 
 pub fn render_fixed_viewer(text: &str, cx: &App) -> AnyElement {

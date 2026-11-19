@@ -9,6 +9,27 @@ pub mod repeatable;
 
 pub use frame::BlockFrame;
 
+/// Renders a `Textarea` wrapped so pressing `Tab` (`IndentInline`) inserts
+/// four spaces instead of moving focus to the next control.
+pub fn tab_textarea(
+    textarea: &Entity<gpui_kit::component::input::TextareaState>,
+    configure: impl FnOnce(gpui_kit::component::input::Textarea) -> gpui_kit::component::input::Textarea,
+) -> AnyElement {
+    use gpui_kit::component::input::{IndentInline, Textarea};
+
+    let state = textarea.clone();
+    div()
+        .w_full()
+        .capture_action(move |_: &IndentInline, window, cx| {
+            cx.stop_propagation();
+            state.update(cx, |s, cx| {
+                EntityInputHandler::replace_text_in_range(s, None, "    ", window, cx);
+            });
+        })
+        .child(configure(Textarea::new(textarea)))
+        .into_any_element()
+}
+
 use gpui_kit::*;
 use uuid::Uuid;
 
