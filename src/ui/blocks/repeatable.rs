@@ -110,6 +110,10 @@ pub fn render_repeatable_editor(
                 badge,
             )
             .nested(true)
+            .on_drag(drag_payload, |drag, _, _, cx| {
+                let label = drag.label.clone();
+                cx.new(|_| DragChildPreview { label })
+            })
             .on_remove({
                 let editor = editor.clone();
                 let pid = parent_id_owned.clone();
@@ -124,10 +128,6 @@ pub fn render_repeatable_editor(
 
             div()
                 .id(SharedString::from(format!("drag-nested-{parent_id_owned}-{child_id}")))
-                .on_drag(drag_payload, |drag, _, _, cx| {
-                    let label = drag.label.clone();
-                    cx.new(|_| DragChildPreview { label })
-                })
                 .drag_over::<DragRepeatableChild>(|style, _, _, cx| {
                     style.border_t_2().border_color(cx.theme().primary)
                 })

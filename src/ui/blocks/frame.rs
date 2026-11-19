@@ -10,6 +10,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
+type DragConfigurator = Box<dyn FnOnce(Stateful<Div>) -> Stateful<Div>>;
+
 /// Shared container frame for both top-level and nested blocks.
 #[derive(IntoElement)]
 pub struct BlockFrame {
@@ -18,6 +20,7 @@ pub struct BlockFrame {
     is_nested: bool,
     show_drag_handle: bool,
     show_remove: bool,
+    on_drag: Option<DragConfigurator>,
     on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     children: Vec<AnyElement>,
 }
@@ -30,6 +33,7 @@ impl BlockFrame {
             is_nested: false,
             show_drag_handle: true,
             show_remove: true,
+            on_drag: None,
             on_remove: None,
             children: Vec::new(),
         }
@@ -47,6 +51,19 @@ impl BlockFrame {
 
     pub fn show_remove(mut self, show: bool) -> Self {
         self.show_remove = show;
+        self
+    }
+
+    pub fn on_drag<T, W>(
+        mut self,
+        value: T,
+        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
+    ) -> Self
+    where
+        T: 'static,
+        W: 'static + Render,
+    {
+        self.on_drag = Some(Box::new(move |el| el.on_drag(value, constructor)));
         self
     }
 
@@ -75,6 +92,30 @@ impl RenderOnce for BlockFrame {
         let border_color = theme.border.opacity(0.55);
         let muted_fg = theme.muted_foreground;
 
+        let drag_handle_id = ElementId::Name(format!("{}-drag-handle", self.id).into());
+        let mut drag_handle = h_flex()
+            .id(drag_handle_id)
+            .items_center()
+            .gap_1p5()
+            .when(self.show_drag_handle, |el| {
+                el.cursor_grab().child(
+                    div()
+                        .text_color(muted_fg.opacity(0.55))
+                        .hover(|s| s.text_color(muted_fg))
+                        .child(Icon::new(IconName::GripVertical).xsmall()),
+                )
+            })
+            .child(
+                Label::new(self.badge)
+                    .text_xs()
+                    .font_medium()
+                    .text_color(muted_fg.opacity(0.75)),
+            );
+
+        if let Some(on_drag) = self.on_drag {
+            drag_handle = on_drag(drag_handle);
+        }
+
         v_flex()
             .id(self.id.clone())
             .w_full()
@@ -91,26 +132,7 @@ impl RenderOnce for BlockFrame {
                     .items_center()
                     .justify_between()
                     .gap_1p5()
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_1p5()
-                            .when(self.show_drag_handle, |el| {
-                                el.child(
-                                    div()
-                                        .cursor_grab()
-                                        .text_color(muted_fg.opacity(0.55))
-                                        .hover(|s| s.text_color(muted_fg))
-                                        .child(Icon::new(IconName::GripVertical).xsmall()),
-                                )
-                            })
-                            .child(
-                                Label::new(self.badge)
-                                    .text_xs()
-                                    .font_medium()
-                                    .text_color(muted_fg.opacity(0.75)),
-                            ),
-                    )
+                    .child(drag_handle)
                     .when(self.show_remove, |el| {
                         let remove_id = ElementId::Name(format!("{}-remove", self.id).into());
                         let on_remove = self.on_remove.clone();

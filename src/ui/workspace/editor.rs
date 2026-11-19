@@ -570,6 +570,10 @@ impl Render for PromptEditor {
                                     SharedString::from(format!("editor-block-{part_id}")),
                                     badge,
                                 )
+                                .on_drag(drag_payload, |drag, _, _, cx| {
+                                    let label = drag.label.clone();
+                                    cx.new(|_| DragTopPreview { label })
+                                })
                                 .on_remove({
                                     let ed = editor_entity.clone();
                                     let pid = part_id.clone();
@@ -583,10 +587,6 @@ impl Render for PromptEditor {
 
                                 div()
                                     .id(SharedString::from(format!("drag-top-{part_id}")))
-                                    .on_drag(drag_payload, |drag, _, _, cx| {
-                                        let label = drag.label.clone();
-                                        cx.new(|_| DragTopPreview { label })
-                                    })
                                     .drag_over::<DragTopLevelPart>(|style, _, _, cx| {
                                         style.border_t_2().border_color(cx.theme().primary)
                                     })

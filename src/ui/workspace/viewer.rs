@@ -118,6 +118,10 @@ pub fn render_viewer_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> A
                 SharedString::from(format!("viewer-block-{part_id}")),
                 badge,
             )
+            .on_drag(drag_payload, |drag, _, _, cx| {
+                let label = drag.label.clone();
+                cx.new(|_| DragViewerPreview { label })
+            })
             .on_remove({
                 let se = session_entity.clone();
                 let pid = part_id.clone();
@@ -131,10 +135,6 @@ pub fn render_viewer_pane(shell: &mut AppShell, cx: &mut Context<AppShell>) -> A
 
             div()
                 .id(SharedString::from(format!("drag-viewer-{part_id}")))
-                .on_drag(drag_payload, |drag, _, _, cx| {
-                    let label = drag.label.clone();
-                    cx.new(|_| DragViewerPreview { label })
-                })
                 .drag_over::<DragViewerPart>(move |style, _, _, _| {
                     style.border_t_2().border_color(primary_color)
                 })
