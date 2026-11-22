@@ -324,6 +324,12 @@ impl ViewerSession {
         cx.notify();
     }
 
+    pub fn move_part_to_end(&mut self, drag_id: &str, cx: &mut Context<Self>) {
+        if move_part_to_end_in_vec(&mut self.session_parts, drag_id) {
+            cx.notify();
+        }
+    }
+
     pub fn add_repeatable_instance(
         &mut self,
         parent_id: &str,
@@ -553,6 +559,18 @@ impl ViewerSession {
     }
 }
 
+fn move_part_to_end_in_vec(parts: &mut Vec<PromptPart>, drag_id: &str) -> bool {
+    let Some(from) = parts.iter().position(|p| p.id() == drag_id) else {
+        return false;
+    };
+    if from + 1 >= parts.len() {
+        return false;
+    }
+    let item = parts.remove(from);
+    parts.push(item);
+    true
+}
+
 fn set_part_id(part: &mut PromptPart, new_id: String) {
     match part {
         PromptPart::Fixed { id, .. }
@@ -562,5 +580,37 @@ fn set_part_id(part: &mut PromptPart, new_id: String) {
         | PromptPart::Code { id, .. }
         | PromptPart::Hr { id }
         | PromptPart::Repeatable { id, .. } => *id = new_id,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::move_part_to_end_in_vec;
+    use crate::model::PromptPart;
+
+    fn hr(id: &str) -> PromptPart {
+        PromptPart::Hr { id: id.to_string() }
+    }
+
+    #[test]
+    fn move_part_to_end_reorders_correctly() {
+        let mut parts = vec![hr("a"), hr("b"), hr("c")];
+
+        assert!(move_part_to_end_in_vec(&mut parts, "a"));
+        assert_eq!(
+            parts.iter().map(PromptPart::id).collect::<Vec<_>>(),
+            vec!["b", "c", "a"]
+        );
+
+        assert!(move_part_to_end_in_vec(&mut parts, "c"));
+        assert_eq!(
+            parts.iter().map(PromptPart::id).collect::<Vec<_>>(),
+            vec!["b", "a", "c"]
+        );
+
+        // Already at end -> no change
+        assert!(!move_part_to_end_in_vec(&mut parts, "c"));
+        // Missing ID -> no change
+        assert!(!move_part_to_end_in_vec(&mut parts, "missing"));
     }
 }

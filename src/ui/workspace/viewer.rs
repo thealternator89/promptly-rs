@@ -14,7 +14,7 @@ use crate::app::{AppShell, WorkspaceMode, WorkspaceTarget};
 use crate::model::PromptPart;
 use crate::model::session::TemporarySectionKind;
 use crate::ui::blocks::{
-    BlockFrame,
+    BlockFrame, BlockPreviewSummary, DragBlockPreview,
     code::render_code_viewer,
     custom::render_custom_viewer,
     fixed::render_fixed_viewer,
@@ -22,13 +22,17 @@ use crate::ui::blocks::{
     hr::render_hr_viewer,
     quote::render_quote_viewer,
     repeatable::render_repeatable_viewer,
+    trailing_drop_zone_style,
+    viewer_part_preview_summary,
 };
 use crate::ui::workspace::preview::render_live_preview_pane;
 
 #[derive(Clone)]
 pub struct DragViewerPart {
     pub id: String,
-    pub label: String,
+    pub source_index: usize,
+    pub badge: &'static str,
+    pub summary: BlockPreviewSummary,
 }
 
 fn part_badge(part: &PromptPart) -> &'static str {
@@ -55,11 +59,15 @@ pub fn render_viewer_pane(
     let is_saved_prompt = matches!(shell.active_target, WorkspaceTarget::SavedPrompt(_));
     let show_preview = shell.show_live_preview;
     let copied = shell.copied_to_clipboard;
+    let app_entity = cx.entity().clone();
+    let dragging_part_id = shell.active_viewer_drag_id(cx).map(str::to_string);
+    let is_dragging = dragging_part_id.is_some();
 
     let session = session_entity.read(cx);
     let title = session.title.clone();
     let has_temp = session.has_temporary_sections();
     let parts = session.session_parts.clone();
+    let parts_len = parts.len();
 
     let theme = cx.theme();
     let border_color = theme.border;
@@ -90,62 +98,98 @@ pub fn render_viewer_pane(
                     ),
             )
         })
-        .children(parts.iter().map(|part| {
+        .children(parts.iter().enumerate().map(|(idx, part)| {
             let part_id = part.id().to_string();
             let badge = part_badge(part);
-            let drag_payload = DragViewerPart {
-                id: part_id.clone(),
-                label: badge.to_string(),
+            let summary = viewer_part_preview_summary(part, session);
+
+            let frame = if is_dragging {
+                BlockFrame::new(
+                    SharedString::from(format!("viewer-block-{part_id}")),
+                    badge,
+                )
+                .collapsed_preview(Some(summary))
+                .dragging_source(dragging_part_id.as_deref() == Some(part_id.as_str()))
+            } else {
+                let drag_payload = DragViewerPart {
+                    id: part_id.clone(),
+                    source_index: idx,
+                    badge,
+                    summary,
+                };
+
+                let body = match part {
+                    PromptPart::Heading { text, level, .. } => render_heading_viewer(text, *level),
+                    PromptPart::Fixed { text, .. } => render_fixed_viewer(text, cx),
+                    PromptPart::Custom { single_line, .. } => {
+                        render_custom_viewer(&part_id, single_line.unwrap_or(false), session)
+                    }
+                    PromptPart::Quote { .. } => render_quote_viewer(&part_id, session, cx),
+                    PromptPart::Code { .. } => {
+                        render_code_viewer(&part_id, &session_entity, session, cx)
+                    }
+                    PromptPart::Hr { .. } => render_hr_viewer(cx),
+                    PromptPart::Repeatable { template_parts, .. } => render_repeatable_viewer(
+                        &part_id,
+                        template_parts,
+                        &session_entity,
+                        session,
+                        cx,
+                    ),
+                };
+
+                BlockFrame::new(
+                    SharedString::from(format!("viewer-block-{part_id}")),
+                    badge,
+                )
+                .on_drag(drag_payload, {
+                    let app = app_entity.clone();
+                    move |drag, _, _, cx| {
+                        let preview = cx.new(|_| DragBlockPreview {
+                            badge: drag.badge,
+                            summary: drag.summary.clone(),
+                            compact: false,
+                        });
+                        let drag_id = drag.id.clone();
+                        app.update(cx, |shell, cx| {
+                            shell.start_viewer_drag(drag_id, &preview, cx);
+                        });
+                        preview
+                    }
+                })
+                .on_remove({
+                    let se = session_entity.clone();
+                    let pid = part_id.clone();
+                    move |_, _, cx| {
+                        se.update(cx, |sess, cx| {
+                            sess.remove_part(&pid, cx);
+                        });
+                    }
+                })
+                .child(body)
             };
 
-            let body = match part {
-                PromptPart::Heading { text, level, .. } => render_heading_viewer(text, *level),
-                PromptPart::Fixed { text, .. } => render_fixed_viewer(text, cx),
-                PromptPart::Custom { single_line, .. } => {
-                    render_custom_viewer(&part_id, single_line.unwrap_or(false), session)
-                }
-                PromptPart::Quote { .. } => render_quote_viewer(&part_id, session, cx),
-                PromptPart::Code { .. } => {
-                    render_code_viewer(&part_id, &session_entity, session, cx)
-                }
-                PromptPart::Hr { .. } => render_hr_viewer(cx),
-                PromptPart::Repeatable { template_parts, .. } => render_repeatable_viewer(
-                    &part_id,
-                    template_parts,
-                    &session_entity,
-                    session,
-                    cx,
-                ),
-            };
-
-            let frame = BlockFrame::new(
-                SharedString::from(format!("viewer-block-{part_id}")),
-                badge,
-            )
-            .on_drag(drag_payload, |drag, _, _, cx| {
-                let label = drag.label.clone();
-                cx.new(|_| DragViewerPreview { label })
-            })
-            .on_remove({
-                let se = session_entity.clone();
-                let pid = part_id.clone();
-                move |_, _, cx| {
-                    se.update(cx, |sess, cx| {
-                        sess.remove_part(&pid, cx);
-                    });
-                }
-            })
-            .child(body);
-
+            let hover_id = part_id.clone();
             div()
                 .id(SharedString::from(format!("drag-viewer-{part_id}")))
-                .drag_over::<DragViewerPart>(move |style, _, _, _| {
-                    style.border_t_2().border_color(primary_color)
+                .when(is_dragging, |el| el.pt_0p5().pb_0p5())
+                .drag_over::<DragViewerPart>(move |style, drag, _, _| {
+                    if drag.id == hover_id {
+                        style
+                    } else if drag.source_index < idx {
+                        style.pb_0().border_b_2().border_color(primary_color)
+                    } else {
+                        style.pt_0().border_t_2().border_color(primary_color)
+                    }
                 })
                 .on_drop({
+                    let app = app_entity.clone();
                     let se = session_entity.clone();
                     let target_id = part_id.clone();
                     move |drag: &DragViewerPart, _, cx| {
+                        app.update(cx, |shell, cx| {
+                            shell.end_viewer_drag(cx);
+                        });
                         se.update(cx, |sess, cx| {
                             sess.reorder_part(&drag.id, &target_id, cx);
                         });
@@ -153,6 +197,32 @@ pub fn render_viewer_pane(
                 })
                 .child(frame)
         }))
+        .when(is_dragging && parts_len > 1, |el| {
+            el.child(
+                trailing_drop_zone_style("drag-viewer-trailing", "Drop here to move to end", cx)
+                    .drag_over::<DragViewerPart>(move |style, drag, _, _| {
+                        if drag.source_index + 1 >= parts_len {
+                            style
+                        } else {
+                            style
+                                .border_color(primary_color)
+                                .bg(primary_color.opacity(0.08))
+                        }
+                    })
+                    .on_drop({
+                        let app = app_entity.clone();
+                        let se = session_entity.clone();
+                        move |drag: &DragViewerPart, _, cx| {
+                            app.update(cx, |shell, cx| {
+                                shell.end_viewer_drag(cx);
+                            });
+                            se.update(cx, |sess, cx| {
+                                sess.move_part_to_end(&drag.id, cx);
+                            });
+                        }
+                    }),
+            )
+        })
         // Bottom "Add temporary section" bar
         .child(
             v_flex()
@@ -296,27 +366,4 @@ pub fn render_viewer_pane(
             ),
         )
         .into_any_element()
-}
-
-struct DragViewerPreview {
-    label: String,
-}
-
-impl Render for DragViewerPreview {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px_3()
-            .py_1p5()
-            .rounded_md()
-            .bg(cx.theme().popover)
-            .border_1()
-            .border_color(cx.theme().border)
-            .shadow_md()
-            .child(
-                Label::new(self.label.clone())
-                    .text_sm()
-                    .font_semibold()
-                    .text_color(cx.theme().foreground),
-            )
-    }
 }

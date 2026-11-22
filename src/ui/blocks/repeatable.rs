@@ -9,34 +9,40 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
 use crate::ui::blocks::{
-    BlockFrame, BlockKind, EditorPartState,
+    BlockFrame, BlockKind, BlockPreviewSummary, DragBlockPreview, EditorPartState,
     code::render_code_editor,
     custom::render_custom_editor,
     fixed::render_fixed_editor,
     heading::render_heading_editor,
     hr::render_hr_editor,
     quote::render_quote_editor,
+    trailing_drop_zone_style,
 };
-use crate::ui::workspace::editor::PromptEditor;
+use crate::ui::workspace::editor::{EditorActiveDrag, PromptEditor};
 
 /// Drag payload for reordering nested child blocks inside a `Repeatable` container.
 #[derive(Clone)]
 pub struct DragRepeatableChild {
     pub parent_id: String,
     pub child_id: String,
-    pub label: String,
+    pub source_index: usize,
+    pub badge: &'static str,
+    pub summary: BlockPreviewSummary,
 }
 
 pub fn render_repeatable_editor(
     parent_id: &str,
     children: &[EditorPartState],
     editor: &Entity<PromptEditor>,
+    active_child_drag: Option<&str>,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
     let border_color = theme.border;
     let muted_fg = theme.muted_foreground;
     let parent_id_owned = parent_id.to_string();
+    let is_dragging_children = active_child_drag.is_some();
+    let children_len = children.len();
 
     v_flex()
         .gap_3()
@@ -55,81 +61,131 @@ pub fn render_repeatable_editor(
                     ),
             )
         })
-        .children(children.iter().map(|child| {
+        .children(children.iter().enumerate().map(|(idx, child)| {
             let child_id = child.id().to_string();
             let badge = child.badge();
-            let drag_payload = DragRepeatableChild {
-                parent_id: parent_id_owned.clone(),
-                child_id: child_id.clone(),
-                label: badge.to_string(),
-            };
+            let summary = child.preview_summary(cx);
 
-            let body = match child {
-                EditorPartState::Heading(s) => render_heading_editor(
-                    s,
-                    {
-                        let editor = editor.clone();
-                        let pid = parent_id_owned.clone();
-                        let cid = child_id.clone();
-                        move |lvl, _, cx| {
-                            editor.update(cx, |ed, cx| {
-                                ed.set_nested_heading_level(&pid, &cid, lvl, cx);
-                            });
-                        }
-                    },
-                    {
+            let frame = if is_dragging_children {
+                BlockFrame::new(
+                    SharedString::from(format!("nested-{parent_id_owned}-{child_id}")),
+                    badge,
+                )
+                .nested(true)
+                .collapsed_preview(Some(summary))
+                .dragging_source(active_child_drag == Some(child_id.as_str()))
+            } else {
+                let drag_payload = DragRepeatableChild {
+                    parent_id: parent_id_owned.clone(),
+                    child_id: child_id.clone(),
+                    source_index: idx,
+                    badge,
+                    summary,
+                };
+
+                let body = match child {
+                    EditorPartState::Heading(s) => render_heading_editor(
+                        s,
+                        {
+                            let editor = editor.clone();
+                            let pid = parent_id_owned.clone();
+                            let cid = child_id.clone();
+                            move |lvl, _, cx| {
+                                editor.update(cx, |ed, cx| {
+                                    ed.set_nested_heading_level(&pid, &cid, lvl, cx);
+                                });
+                            }
+                        },
+                        {
+                            let editor = editor.clone();
+                            let pid = parent_id_owned.clone();
+                            let cid = child_id.clone();
+                            move |checked, _, cx| {
+                                editor.update(cx, |ed, cx| {
+                                    ed.set_nested_heading_exclude(&pid, &cid, checked, cx);
+                                });
+                            }
+                        },
+                    ),
+                    EditorPartState::Fixed(s) => render_fixed_editor(s),
+                    EditorPartState::Custom(s) => render_custom_editor(s, {
                         let editor = editor.clone();
                         let pid = parent_id_owned.clone();
                         let cid = child_id.clone();
                         move |checked, _, cx| {
                             editor.update(cx, |ed, cx| {
-                                ed.set_nested_heading_exclude(&pid, &cid, checked, cx);
+                                ed.set_nested_custom_single_line(&pid, &cid, checked, cx);
                             });
                         }
-                    },
-                ),
-                EditorPartState::Fixed(s) => render_fixed_editor(s),
-                EditorPartState::Custom(s) => render_custom_editor(s, {
+                    }),
+                    EditorPartState::Code(s) => render_code_editor(s, cx),
+                    EditorPartState::Quote { .. } => render_quote_editor(cx),
+                    EditorPartState::Hr { .. } => render_hr_editor(cx),
+                    EditorPartState::Repeatable { .. } => div().into_any_element(),
+                };
+
+                BlockFrame::new(
+                    SharedString::from(format!("nested-{parent_id_owned}-{child_id}")),
+                    badge,
+                )
+                .nested(true)
+                .on_drag(drag_payload, {
+                    let editor = editor.clone();
+                    move |drag, _, _, cx| {
+                        let preview = cx.new(|_| DragBlockPreview {
+                            badge: drag.badge,
+                            summary: drag.summary.clone(),
+                            compact: true,
+                        });
+                        let parent_id = drag.parent_id.clone();
+                        let child_id = drag.child_id.clone();
+                        editor.update(cx, |ed, cx| {
+                            ed.start_drag(
+                                EditorActiveDrag::RepeatableChild {
+                                    parent_id,
+                                    child_id,
+                                },
+                                &preview,
+                                cx,
+                            );
+                        });
+                        preview
+                    }
+                })
+                .on_remove({
                     let editor = editor.clone();
                     let pid = parent_id_owned.clone();
                     let cid = child_id.clone();
-                    move |checked, _, cx| {
+                    move |_, _, cx| {
                         editor.update(cx, |ed, cx| {
-                            ed.set_nested_custom_single_line(&pid, &cid, checked, cx);
+                            ed.remove_nested_part(&pid, &cid, cx);
                         });
                     }
-                }),
-                EditorPartState::Code(s) => render_code_editor(s, cx),
-                EditorPartState::Quote { .. } => render_quote_editor(cx),
-                EditorPartState::Hr { .. } => render_hr_editor(cx),
-                EditorPartState::Repeatable { .. } => div().into_any_element(),
+                })
+                .child(body)
             };
 
-            let frame = BlockFrame::new(
-                SharedString::from(format!("nested-{parent_id_owned}-{child_id}")),
-                badge,
-            )
-            .nested(true)
-            .on_drag(drag_payload, |drag, _, _, cx| {
-                let label = drag.label.clone();
-                cx.new(|_| DragChildPreview { label })
-            })
-            .on_remove({
-                let editor = editor.clone();
-                let pid = parent_id_owned.clone();
-                let cid = child_id.clone();
-                move |_, _, cx| {
-                    editor.update(cx, |ed, cx| {
-                        ed.remove_nested_part(&pid, &cid, cx);
-                    });
-                }
-            })
-            .child(body);
-
+            let hover_pid = parent_id_owned.clone();
+            let hover_cid = child_id.clone();
             div()
-                .id(SharedString::from(format!("drag-nested-{parent_id_owned}-{child_id}")))
-                .drag_over::<DragRepeatableChild>(|style, _, _, cx| {
-                    style.border_t_2().border_color(cx.theme().primary)
+                .id(SharedString::from(format!(
+                    "drag-nested-{parent_id_owned}-{child_id}"
+                )))
+                .when(is_dragging_children, |el| el.pt_0p5().pb_0p5())
+                .drag_over::<DragRepeatableChild>(move |style, drag, _, cx| {
+                    if drag.parent_id != hover_pid || drag.child_id == hover_cid {
+                        style
+                    } else if drag.source_index < idx {
+                        style
+                            .pb_0()
+                            .border_b_2()
+                            .border_color(cx.theme().primary)
+                    } else {
+                        style
+                            .pt_0()
+                            .border_t_2()
+                            .border_color(cx.theme().primary)
+                    }
                 })
                 .on_drop({
                     let editor = editor.clone();
@@ -138,6 +194,7 @@ pub fn render_repeatable_editor(
                     move |drag: &DragRepeatableChild, _, cx| {
                         if drag.parent_id == pid {
                             editor.update(cx, |ed, cx| {
+                                ed.end_drag(cx);
                                 ed.reorder_nested_part(&pid, &drag.child_id, &target_cid, cx);
                             });
                         }
@@ -145,6 +202,35 @@ pub fn render_repeatable_editor(
                 })
                 .child(frame)
         }))
+        .when(is_dragging_children && children_len > 1, |el| {
+            let hover_pid = parent_id_owned.clone();
+            let drop_pid = parent_id_owned.clone();
+            let editor = editor.clone();
+            el.child(
+                trailing_drop_zone_style(
+                    SharedString::from(format!("drag-nested-trailing-{parent_id_owned}")),
+                    "Drop here to move to end",
+                    cx,
+                )
+                .drag_over::<DragRepeatableChild>(move |style, drag, _, cx| {
+                    if drag.parent_id != hover_pid || drag.source_index + 1 >= children_len {
+                        style
+                    } else {
+                        style
+                            .border_color(cx.theme().primary)
+                            .bg(cx.theme().primary.opacity(0.08))
+                    }
+                })
+                .on_drop(move |drag: &DragRepeatableChild, _, cx| {
+                    if drag.parent_id == drop_pid {
+                        editor.update(cx, |ed, cx| {
+                            ed.end_drag(cx);
+                            ed.move_nested_part_to_end(&drop_pid, &drag.child_id, cx);
+                        });
+                    }
+                }),
+            )
+        })
         // Inline toolbar to append child blocks
         .child(
             h_flex()
@@ -175,29 +261,6 @@ pub fn render_repeatable_editor(
                 })),
         )
         .into_any_element()
-}
-
-struct DragChildPreview {
-    label: String,
-}
-
-impl Render for DragChildPreview {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px_2p5()
-            .py_1()
-            .rounded_md()
-            .bg(cx.theme().popover)
-            .border_1()
-            .border_color(cx.theme().border)
-            .shadow_md()
-            .child(
-                Label::new(self.label.clone())
-                    .text_xs()
-                    .font_semibold()
-                    .text_color(cx.theme().foreground),
-            )
-    }
 }
 
 pub fn render_repeatable_viewer(

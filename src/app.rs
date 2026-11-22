@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::model::{AppSettings, Prompt, ThemePreference, ViewerSession};
 use crate::services::StorageService;
+use crate::ui::blocks::DragBlockPreview;
 use crate::ui::modals::{
     export_modal::ExportModal,
     import_modal::ImportModal,
@@ -57,6 +58,8 @@ pub struct AppShell {
     pub preview_textarea: Entity<TextareaState>,
     preview_text_cache: String,
     pub copied_to_clipboard: bool,
+    pub active_viewer_drag: Option<String>,
+    _viewer_drag_release_sub: Option<Subscription>,
     _copy_reset_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -117,9 +120,39 @@ impl AppShell {
             preview_textarea,
             preview_text_cache: String::new(),
             copied_to_clipboard: false,
+            active_viewer_drag: None,
+            _viewer_drag_release_sub: None,
             _copy_reset_task: None,
             _subscriptions: vec![appearance_sub],
         }
+    }
+
+    pub fn start_viewer_drag(
+        &mut self,
+        part_id: String,
+        preview: &Entity<DragBlockPreview>,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_viewer_drag = Some(part_id);
+        self._viewer_drag_release_sub = Some(cx.observe_release(preview, |this, _, cx| {
+            this.end_viewer_drag(cx);
+        }));
+        cx.notify();
+    }
+
+    pub fn end_viewer_drag(&mut self, cx: &mut Context<Self>) {
+        let changed = self.active_viewer_drag.take().is_some();
+        self._viewer_drag_release_sub = None;
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub fn active_viewer_drag_id(&self, cx: &App) -> Option<&str> {
+        if !cx.has_active_drag() {
+            return None;
+        }
+        self.active_viewer_drag.as_deref()
     }
 
     pub fn sync_preview_textarea(
@@ -147,6 +180,8 @@ impl AppShell {
     }
 
     pub fn select_scratchpad(&mut self, cx: &mut Context<Self>) {
+        self.active_viewer_drag = None;
+        self._viewer_drag_release_sub = None;
         self.active_target = WorkspaceTarget::Scratchpad;
         self.workspace_mode = WorkspaceMode::Viewer;
         self.editor = None;
@@ -158,6 +193,8 @@ impl AppShell {
 
     pub fn select_prompt(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(prompt) = self.prompts.iter().find(|p| p.id == id).cloned() {
+            self.active_viewer_drag = None;
+            self._viewer_drag_release_sub = None;
             self.sessions
                 .entry(id.clone())
                 .or_insert_with(|| cx.new(|cx| ViewerSession::from_prompt(&prompt, window, cx)));
@@ -169,6 +206,8 @@ impl AppShell {
     }
 
     pub fn start_new_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.active_viewer_drag = None;
+        self._viewer_drag_release_sub = None;
         let weak = cx.weak_entity();
         self.editor = Some(cx.new(|cx| PromptEditor::new_blank(weak, window, cx)));
         self.active_target = WorkspaceTarget::NewPrompt;
@@ -182,6 +221,8 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.active_viewer_drag = None;
+        self._viewer_drag_release_sub = None;
         if mode == WorkspaceMode::Editor {
             let weak = cx.weak_entity();
             match &self.active_target {
@@ -222,6 +263,8 @@ impl AppShell {
         let id = prompt.id.clone();
         self.sessions
             .insert(id.clone(), cx.new(|cx| ViewerSession::from_prompt(&prompt, window, cx)));
+        self.active_viewer_drag = None;
+        self._viewer_drag_release_sub = None;
         self.active_target = WorkspaceTarget::SavedPrompt(id);
         self.workspace_mode = WorkspaceMode::Viewer;
         self.editor = None;
@@ -229,6 +272,8 @@ impl AppShell {
     }
 
     pub fn cancel_editor(&mut self, existing_id: Option<String>, cx: &mut Context<Self>) {
+        self.active_viewer_drag = None;
+        self._viewer_drag_release_sub = None;
         self.editor = None;
         self.workspace_mode = WorkspaceMode::Viewer;
         match existing_id {
@@ -245,6 +290,8 @@ impl AppShell {
         }
         self.prompts.retain(|p| p.id != id);
         self.sessions.remove(id);
+        self.active_viewer_drag = None;
+        self._viewer_drag_release_sub = None;
         self.editor = None;
         self.active_target = WorkspaceTarget::Scratchpad;
         self.workspace_mode = WorkspaceMode::Viewer;
@@ -398,6 +445,8 @@ impl AppShell {
         let id = prompt.id.clone();
         self.sessions
             .insert(id.clone(), cx.new(|cx| ViewerSession::from_prompt(&prompt, window, cx)));
+        self.active_viewer_drag = None;
+        self._viewer_drag_release_sub = None;
         self.active_target = WorkspaceTarget::SavedPrompt(id);
         self.workspace_mode = WorkspaceMode::Viewer;
         self.editor = None;

@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::app::AppShell;
 use crate::model::Prompt;
 use crate::ui::blocks::{
-    BlockFrame, BlockKind, EditorPartState,
+    BlockFrame, BlockKind, BlockPreviewSummary, DragBlockPreview, EditorPartState,
     code::render_code_editor,
     custom::render_custom_editor,
     fixed::render_fixed_editor,
@@ -24,12 +24,33 @@ use crate::ui::blocks::{
     hr::render_hr_editor,
     quote::render_quote_editor,
     repeatable::render_repeatable_editor,
+    trailing_drop_zone_style,
 };
 
 #[derive(Clone)]
 pub struct DragTopLevelPart {
     pub id: String,
-    pub label: String,
+    pub source_index: usize,
+    pub badge: &'static str,
+    pub summary: BlockPreviewSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditorActiveDrag {
+    TopLevel(String),
+    RepeatableChild { parent_id: String, child_id: String },
+}
+
+fn move_editor_part_to_end(parts: &mut Vec<EditorPartState>, drag_id: &str) -> bool {
+    let Some(from) = parts.iter().position(|p| p.id() == drag_id) else {
+        return false;
+    };
+    if from + 1 >= parts.len() {
+        return false;
+    }
+    let item = parts.remove(from);
+    parts.push(item);
+    true
 }
 
 pub struct PromptEditor {
@@ -39,6 +60,8 @@ pub struct PromptEditor {
     title_input: Entity<InputState>,
     description_input: Entity<TextareaState>,
     parts: Vec<EditorPartState>,
+    active_drag: Option<EditorActiveDrag>,
+    _drag_release_sub: Option<Subscription>,
     confirm_delete: bool,
     _delete_reset_task: Option<Task<()>>,
     validation_error: Option<String>,
@@ -61,6 +84,8 @@ impl PromptEditor {
             title_input,
             description_input,
             parts: Vec::new(),
+            active_drag: None,
+            _drag_release_sub: None,
             confirm_delete: false,
             _delete_reset_task: None,
             validation_error: None,
@@ -102,10 +127,40 @@ impl PromptEditor {
             title_input,
             description_input,
             parts,
+            active_drag: None,
+            _drag_release_sub: None,
             confirm_delete: false,
             _delete_reset_task: None,
             validation_error: None,
         }
+    }
+
+    pub fn start_drag(
+        &mut self,
+        drag: EditorActiveDrag,
+        preview: &Entity<DragBlockPreview>,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_drag = Some(drag);
+        self._drag_release_sub = Some(cx.observe_release(preview, |this, _, cx| {
+            this.end_drag(cx);
+        }));
+        cx.notify();
+    }
+
+    pub fn end_drag(&mut self, cx: &mut Context<Self>) {
+        let changed = self.active_drag.take().is_some();
+        self._drag_release_sub = None;
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub fn active_drag_for_render(&self, cx: &App) -> Option<&EditorActiveDrag> {
+        if !cx.has_active_drag() {
+            return None;
+        }
+        self.active_drag.as_ref()
     }
 
     pub fn add_part(&mut self, kind: BlockKind, window: &mut Window, cx: &mut Context<Self>) {
@@ -131,6 +186,12 @@ impl PromptEditor {
         let item = self.parts.remove(from);
         self.parts.insert(to, item);
         cx.notify();
+    }
+
+    pub fn move_part_to_end(&mut self, drag_id: &str, cx: &mut Context<Self>) {
+        if move_editor_part_to_end(&mut self.parts, drag_id) {
+            cx.notify();
+        }
     }
 
     pub fn set_heading_level(&mut self, id: &str, level: u8, cx: &mut Context<Self>) {
@@ -202,6 +263,20 @@ impl PromptEditor {
             };
             let item = template_parts.remove(from);
             template_parts.insert(to, item);
+            cx.notify();
+        }
+    }
+
+    pub fn move_nested_part_to_end(
+        &mut self,
+        parent_id: &str,
+        drag_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(EditorPartState::Repeatable { template_parts, .. }) =
+            self.parts.iter_mut().find(|p| p.id() == parent_id)
+            && move_editor_part_to_end(template_parts, drag_id)
+        {
             cx.notify();
         }
     }
@@ -374,6 +449,20 @@ impl Render for PromptEditor {
         let muted_fg = theme.muted_foreground;
         let is_editing = self.editing_prompt_id.is_some();
         let editor_entity = cx.entity().clone();
+        let active_drag = self.active_drag_for_render(cx).cloned();
+        let dragging_top_id = active_drag.as_ref().and_then(|d| match d {
+            EditorActiveDrag::TopLevel(id) => Some(id.as_str()),
+            _ => None,
+        });
+        let is_dragging_top = dragging_top_id.is_some();
+        let dragging_child_ref = active_drag.as_ref().and_then(|d| match d {
+            EditorActiveDrag::RepeatableChild {
+                parent_id,
+                child_id,
+            } => Some((parent_id.as_str(), child_id.as_str())),
+            _ => None,
+        });
+        let parts_len = self.parts.len();
 
         v_flex()
             .size_full()
@@ -516,94 +605,173 @@ impl Render for PromptEditor {
                                         ),
                                 )
                             })
-                            .children(self.parts.iter().map(|part| {
+                            .children(self.parts.iter().enumerate().map(|(idx, part)| {
                                 let part_id = part.id().to_string();
                                 let badge = part.badge();
-                                let drag_payload = DragTopLevelPart {
-                                    id: part_id.clone(),
-                                    label: badge.to_string(),
-                                };
+                                let summary = part.preview_summary(cx);
 
-                                let body = match part {
-                                    EditorPartState::Heading(s) => render_heading_editor(
-                                        s,
-                                        {
-                                            let ed = editor_entity.clone();
-                                            let pid = part_id.clone();
-                                            move |lvl, _, cx| {
-                                                ed.update(cx, |this, cx| {
-                                                    this.set_heading_level(&pid, lvl, cx);
-                                                });
-                                            }
-                                        },
-                                        {
+                                let frame = if is_dragging_top {
+                                    BlockFrame::new(
+                                        SharedString::from(format!("editor-block-{part_id}")),
+                                        badge,
+                                    )
+                                    .collapsed_preview(Some(summary))
+                                    .dragging_source(dragging_top_id == Some(part_id.as_str()))
+                                } else {
+                                    let active_child_for_this = dragging_child_ref
+                                        .filter(|(pid, _)| *pid == part_id.as_str())
+                                        .map(|(_, cid)| cid);
+
+                                    let body = match part {
+                                        EditorPartState::Heading(s) => render_heading_editor(
+                                            s,
+                                            {
+                                                let ed = editor_entity.clone();
+                                                let pid = part_id.clone();
+                                                move |lvl, _, cx| {
+                                                    ed.update(cx, |this, cx| {
+                                                        this.set_heading_level(&pid, lvl, cx);
+                                                    });
+                                                }
+                                            },
+                                            {
+                                                let ed = editor_entity.clone();
+                                                let pid = part_id.clone();
+                                                move |checked, _, cx| {
+                                                    ed.update(cx, |this, cx| {
+                                                        this.set_heading_exclude(
+                                                            &pid, checked, cx,
+                                                        );
+                                                    });
+                                                }
+                                            },
+                                        ),
+                                        EditorPartState::Fixed(s) => render_fixed_editor(s),
+                                        EditorPartState::Custom(s) => render_custom_editor(s, {
                                             let ed = editor_entity.clone();
                                             let pid = part_id.clone();
                                             move |checked, _, cx| {
                                                 ed.update(cx, |this, cx| {
-                                                    this.set_heading_exclude(&pid, checked, cx);
+                                                    this.set_custom_single_line(&pid, checked, cx);
                                                 });
                                             }
-                                        },
-                                    ),
-                                    EditorPartState::Fixed(s) => render_fixed_editor(s),
-                                    EditorPartState::Custom(s) => render_custom_editor(s, {
+                                        }),
+                                        EditorPartState::Code(s) => render_code_editor(s, cx),
+                                        EditorPartState::Quote { .. } => render_quote_editor(cx),
+                                        EditorPartState::Hr { .. } => render_hr_editor(cx),
+                                        EditorPartState::Repeatable { id, template_parts } => {
+                                            render_repeatable_editor(
+                                                id,
+                                                template_parts,
+                                                &editor_entity,
+                                                active_child_for_this,
+                                                cx,
+                                            )
+                                        }
+                                    };
+
+                                    let drag_payload = DragTopLevelPart {
+                                        id: part_id.clone(),
+                                        source_index: idx,
+                                        badge,
+                                        summary,
+                                    };
+
+                                    BlockFrame::new(
+                                        SharedString::from(format!("editor-block-{part_id}")),
+                                        badge,
+                                    )
+                                    .on_drag(drag_payload, {
+                                        let ed = editor_entity.clone();
+                                        move |drag, _, _, cx| {
+                                            let preview = cx.new(|_| DragBlockPreview {
+                                                badge: drag.badge,
+                                                summary: drag.summary.clone(),
+                                                compact: false,
+                                            });
+                                            let drag_id = drag.id.clone();
+                                            ed.update(cx, |this, cx| {
+                                                this.start_drag(
+                                                    EditorActiveDrag::TopLevel(drag_id),
+                                                    &preview,
+                                                    cx,
+                                                );
+                                            });
+                                            preview
+                                        }
+                                    })
+                                    .on_remove({
                                         let ed = editor_entity.clone();
                                         let pid = part_id.clone();
-                                        move |checked, _, cx| {
+                                        move |_, _, cx| {
                                             ed.update(cx, |this, cx| {
-                                                this.set_custom_single_line(&pid, checked, cx);
+                                                this.remove_part(&pid, cx);
                                             });
                                         }
-                                    }),
-                                    EditorPartState::Code(s) => render_code_editor(s, cx),
-                                    EditorPartState::Quote { .. } => render_quote_editor(cx),
-                                    EditorPartState::Hr { .. } => render_hr_editor(cx),
-                                    EditorPartState::Repeatable { id, template_parts } => {
-                                        render_repeatable_editor(
-                                            id,
-                                            template_parts,
-                                            &editor_entity,
-                                            cx,
-                                        )
-                                    }
+                                    })
+                                    .child(body)
                                 };
 
-                                let frame = BlockFrame::new(
-                                    SharedString::from(format!("editor-block-{part_id}")),
-                                    badge,
-                                )
-                                .on_drag(drag_payload, |drag, _, _, cx| {
-                                    let label = drag.label.clone();
-                                    cx.new(|_| DragTopPreview { label })
-                                })
-                                .on_remove({
-                                    let ed = editor_entity.clone();
-                                    let pid = part_id.clone();
-                                    move |_, _, cx| {
-                                        ed.update(cx, |this, cx| {
-                                            this.remove_part(&pid, cx);
-                                        });
-                                    }
-                                })
-                                .child(body);
-
+                                let hover_id = part_id.clone();
                                 div()
                                     .id(SharedString::from(format!("drag-top-{part_id}")))
-                                    .drag_over::<DragTopLevelPart>(|style, _, _, cx| {
-                                        style.border_t_2().border_color(cx.theme().primary)
+                                    .when(is_dragging_top, |el| el.pt_0p5().pb_0p5())
+                                    .drag_over::<DragTopLevelPart>(move |style, drag, _, cx| {
+                                        if drag.id == hover_id {
+                                            style
+                                        } else if drag.source_index < idx {
+                                            style
+                                                .pb_0()
+                                                .border_b_2()
+                                                .border_color(cx.theme().primary)
+                                        } else {
+                                            style
+                                                .pt_0()
+                                                .border_t_2()
+                                                .border_color(cx.theme().primary)
+                                        }
                                     })
                                     .on_drop({
                                         let ed = editor_entity.clone();
                                         let target_id = part_id.clone();
                                         move |drag: &DragTopLevelPart, _, cx| {
                                             ed.update(cx, |this, cx| {
+                                                this.end_drag(cx);
                                                 this.reorder_part(&drag.id, &target_id, cx);
                                             });
                                         }
                                     })
                                     .child(frame)
-                            })),
+                            }))
+                            .when(is_dragging_top && parts_len > 1, |el| {
+                                el.child(
+                                    trailing_drop_zone_style(
+                                        "drag-top-trailing",
+                                        "Drop here to move to end",
+                                        cx,
+                                    )
+                                    .drag_over::<DragTopLevelPart>(
+                                        move |style, drag, _, cx| {
+                                            if drag.source_index + 1 >= parts_len {
+                                                style
+                                            } else {
+                                                style
+                                                    .border_color(cx.theme().primary)
+                                                    .bg(cx.theme().primary.opacity(0.08))
+                                            }
+                                        },
+                                    )
+                                    .on_drop({
+                                        let ed = editor_entity.clone();
+                                        move |drag: &DragTopLevelPart, _, cx| {
+                                            ed.update(cx, |this, cx| {
+                                                this.end_drag(cx);
+                                                this.move_part_to_end(&drag.id, cx);
+                                            });
+                                        }
+                                    }),
+                                )
+                            }),
                     )
                     // Bottom "Add a Part" Toolbar
                     .child(
@@ -639,29 +807,6 @@ impl Render for PromptEditor {
                                     })),
                             ),
                     ),
-            )
-    }
-}
-
-struct DragTopPreview {
-    label: String,
-}
-
-impl Render for DragTopPreview {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px_3()
-            .py_1p5()
-            .rounded_md()
-            .bg(cx.theme().popover)
-            .border_1()
-            .border_color(cx.theme().border)
-            .shadow_md()
-            .child(
-                Label::new(self.label.clone())
-                    .text_sm()
-                    .font_semibold()
-                    .text_color(cx.theme().foreground),
             )
     }
 }
