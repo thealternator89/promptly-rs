@@ -11,6 +11,7 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
 use crate::app::{AppShell, WorkspaceTarget};
+use crate::model::ThemePreference;
 
 /// Drag payload for reordering saved prompts in the sidebar.
 #[derive(Clone)]
@@ -48,9 +49,13 @@ impl Render for LibrarySidebar {
             return v_flex().size_full().into_any_element();
         };
 
-        let (prompts, active_target) = {
+        let (prompts, active_target, theme_mode) = {
             let app_ref = app.read(cx);
-            (app_ref.prompts.clone(), app_ref.active_target.clone())
+            (
+                app_ref.prompts.clone(),
+                app_ref.active_target.clone(),
+                app_ref.settings.theme_mode,
+            )
         };
 
         let query = self.search_input.read(cx).value().trim().to_lowercase();
@@ -74,6 +79,12 @@ impl Render for LibrarySidebar {
         let accent_bg = theme.accent;
         let accent_fg = theme.accent_foreground;
         let secondary_bg = theme.secondary;
+        let active_badge_bg = theme.background.opacity(0.6);
+        let theme_icon = match theme_mode {
+            ThemePreference::Auto => IconName::SunMoon,
+            ThemePreference::Light => IconName::Sun,
+            ThemePreference::Dark => IconName::Moon,
+        };
 
         v_flex()
             .size_full()
@@ -190,7 +201,11 @@ impl Render for LibrarySidebar {
                                             .px_1p5()
                                             .py_0p5()
                                             .rounded_sm()
-                                            .bg(secondary_bg)
+                                            .bg(if is_scratchpad {
+                                                active_badge_bg
+                                            } else {
+                                                secondary_bg
+                                            })
                                             .child(
                                                 Label::new("Pinned")
                                                     .text_xs()
@@ -296,7 +311,11 @@ impl Render for LibrarySidebar {
                                                     .px_1p5()
                                                     .py_0p5()
                                                     .rounded_sm()
-                                                    .bg(secondary_bg)
+                                                    .bg(if is_active {
+                                                        active_badge_bg
+                                                    } else {
+                                                        secondary_bg
+                                                    })
                                                     .child(
                                                         Label::new(format!("{part_count}"))
                                                             .text_xs()
@@ -319,7 +338,7 @@ impl Render for LibrarySidebar {
                             )
                     })),
             )
-            // Sidebar Footer: Settings & Version
+            // Sidebar Footer: Settings, Version & Theme Toggle
             .child(
                 h_flex()
                     .px_3()
@@ -328,6 +347,7 @@ impl Render for LibrarySidebar {
                     .border_color(border_color)
                     .items_center()
                     .justify_between()
+                    .gap_2()
                     .child(
                         Button::new("sidebar-settings")
                             .small()
@@ -344,9 +364,31 @@ impl Render for LibrarySidebar {
                             }),
                     )
                     .child(
-                        Label::new(format!("v{}", env!("CARGO_PKG_VERSION")))
-                            .text_xs()
-                            .text_color(muted_fg),
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .flex_shrink_0()
+                            .child(
+                                Label::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                    .text_xs()
+                                    .text_color(muted_fg),
+                            )
+                            .child(
+                                Button::new("sidebar-theme-toggle")
+                                    .small()
+                                    .ghost()
+                                    .icon(Icon::new(theme_icon))
+                                    .tooltip(theme_mode.tooltip())
+                                    .accessibility_label(theme_mode.tooltip())
+                                    .on_click({
+                                        let app = app.clone();
+                                        move |_, window, cx| {
+                                            app.update(cx, |shell, cx| {
+                                                shell.cycle_theme_mode(window, cx);
+                                            });
+                                        }
+                                    }),
+                            ),
                     ),
             )
             .into_any_element()

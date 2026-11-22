@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui_kit::component::{
-    ActiveTheme as _, StyledExt, TitleBar, h_flex,
+    ActiveTheme as _, StyledExt, Theme, ThemeMode, TitleBar, h_flex,
     input::TextareaState,
     label::Label,
     resizable::{h_resizable, resizable_panel},
@@ -11,7 +11,7 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use uuid::Uuid;
 
-use crate::model::{AppSettings, Prompt, ViewerSession};
+use crate::model::{AppSettings, Prompt, ThemePreference, ViewerSession};
 use crate::services::StorageService;
 use crate::ui::modals::{
     export_modal::ExportModal,
@@ -58,7 +58,16 @@ pub struct AppShell {
     preview_text_cache: String,
     pub copied_to_clipboard: bool,
     _copy_reset_task: Option<Task<()>>,
-    pub status_message: Option<String>,
+    _subscriptions: Vec<Subscription>,
+}
+
+/// Applies the selected [`ThemePreference`] to `gpui-kit`'s global `Theme`.
+fn apply_theme_preference(pref: ThemePreference, window: &mut Window, cx: &mut App) {
+    match pref {
+        ThemePreference::Auto => Theme::sync_system_appearance(Some(window), cx),
+        ThemePreference::Light => Theme::change(ThemeMode::Light, Some(window), cx),
+        ThemePreference::Dark => Theme::change(ThemeMode::Dark, Some(window), cx),
+    }
 }
 
 impl AppShell {
@@ -73,6 +82,14 @@ impl AppShell {
             Vec::new()
         });
         let settings = storage.load_settings().unwrap_or_default();
+        apply_theme_preference(settings.theme_mode, window, cx);
+
+        let appearance_sub = cx.observe_window_appearance(window, |this, window, cx| {
+            if this.settings.theme_mode == ThemePreference::Auto {
+                apply_theme_preference(ThemePreference::Auto, window, cx);
+                cx.notify();
+            }
+        });
 
         let mut sessions = HashMap::new();
         sessions.insert(
@@ -101,7 +118,7 @@ impl AppShell {
             preview_text_cache: String::new(),
             copied_to_clipboard: false,
             _copy_reset_task: None,
-            status_message: None,
+            _subscriptions: vec![appearance_sub],
         }
     }
 
@@ -136,7 +153,6 @@ impl AppShell {
         self.sessions
             .entry("scratchpad".to_string())
             .or_insert_with(|| cx.new(|_| ViewerSession::scratchpad()));
-        self.status_message = None;
         cx.notify();
     }
 
@@ -148,7 +164,6 @@ impl AppShell {
             self.active_target = WorkspaceTarget::SavedPrompt(id);
             self.workspace_mode = WorkspaceMode::Viewer;
             self.editor = None;
-            self.status_message = None;
             cx.notify();
         }
     }
@@ -158,7 +173,6 @@ impl AppShell {
         self.editor = Some(cx.new(|cx| PromptEditor::new_blank(weak, window, cx)));
         self.active_target = WorkspaceTarget::NewPrompt;
         self.workspace_mode = WorkspaceMode::Editor;
-        self.status_message = None;
         cx.notify();
     }
 
@@ -196,13 +210,12 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         if let Err(err) = self.storage.save_prompt(&prompt) {
-            self.status_message = Some(format!("Failed to save prompt: {err}"));
-            cx.notify();
+            eprintln!("Failed to save prompt: {err}");
             return;
         }
 
         self.prompts = self.storage.load_prompts().unwrap_or_else(|err| {
-            self.status_message = Some(format!("Saved, but failed to reload prompts: {err}"));
+            eprintln!("Saved, but failed to reload prompts: {err}");
             self.prompts.clone()
         });
 
@@ -212,7 +225,6 @@ impl AppShell {
         self.active_target = WorkspaceTarget::SavedPrompt(id);
         self.workspace_mode = WorkspaceMode::Viewer;
         self.editor = None;
-        self.status_message = Some(format!("Saved \"{}\"", prompt.title));
         cx.notify();
     }
 
@@ -228,8 +240,7 @@ impl AppShell {
 
     pub fn delete_prompt(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Err(err) = self.storage.delete_prompt(id) {
-            self.status_message = Some(format!("Failed to delete prompt: {err}"));
-            cx.notify();
+            eprintln!("Failed to delete prompt: {err}");
             return;
         }
         self.prompts.retain(|p| p.id != id);
@@ -237,7 +248,6 @@ impl AppShell {
         self.editor = None;
         self.active_target = WorkspaceTarget::Scratchpad;
         self.workspace_mode = WorkspaceMode::Viewer;
-        self.status_message = Some("Prompt deleted.".to_string());
         cx.notify();
     }
 
@@ -262,7 +272,7 @@ impl AppShell {
 
         let ids: Vec<String> = self.prompts.iter().map(|p| p.id.clone()).collect();
         if let Err(err) = self.storage.save_prompts_order(&ids) {
-            self.status_message = Some(format!("Failed to save prompt order: {err}"));
+            eprintln!("Failed to save prompt order: {err}");
         }
         cx.notify();
     }
@@ -343,8 +353,7 @@ impl AppShell {
         };
 
         if let Err(err) = self.storage.save_prompt(&prompt) {
-            self.status_message = Some(format!("Failed to save prompt: {err}"));
-            cx.notify();
+            eprintln!("Failed to save prompt: {err}");
             return;
         }
 
@@ -362,7 +371,6 @@ impl AppShell {
         self.active_target = WorkspaceTarget::SavedPrompt(new_id);
         self.workspace_mode = WorkspaceMode::Viewer;
         self.active_modal = None;
-        self.status_message = Some(format!("Added \"{title}\" to Library"));
         cx.notify();
     }
 
@@ -380,8 +388,7 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         if let Err(err) = self.storage.save_prompt(&prompt) {
-            self.status_message = Some(format!("Failed to save imported prompt: {err}"));
-            cx.notify();
+            eprintln!("Failed to save imported prompt: {err}");
             return;
         }
         self.prompts = self
@@ -395,7 +402,6 @@ impl AppShell {
         self.workspace_mode = WorkspaceMode::Viewer;
         self.editor = None;
         self.active_modal = None;
-        self.status_message = Some(format!("Imported \"{}\"", prompt.title));
         cx.notify();
     }
 
@@ -423,15 +429,36 @@ impl AppShell {
         cx.notify();
     }
 
+    /// Cycles the active theme preference (`Auto -> Light -> Dark -> Auto`), applies it, and persists `settings.json`.
+    pub fn cycle_theme_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next = self.settings.theme_mode.next();
+        self.settings.theme_mode = next;
+        apply_theme_preference(next, window, cx);
+
+        if let Err(err) = self.storage.save_settings(&self.settings) {
+            eprintln!("Failed to save theme preference: {err}");
+        }
+        cx.notify();
+    }
+
+    /// Updates only `disallowed_domains` so saving from `SettingsModal` preserves `theme_mode`.
+    pub fn save_disallowed_domains_and_close(
+        &mut self,
+        disallowed_domains: String,
+        cx: &mut Context<Self>,
+    ) {
+        let mut settings = self.settings.clone();
+        settings.disallowed_domains = disallowed_domains;
+        self.save_settings_and_close(settings, cx);
+    }
+
     pub fn save_settings_and_close(&mut self, settings: AppSettings, cx: &mut Context<Self>) {
         if let Err(err) = self.storage.save_settings(&settings) {
-            self.status_message = Some(format!("Failed to save settings: {err}"));
-            cx.notify();
+            eprintln!("Failed to save settings: {err}");
             return;
         }
         self.settings = settings;
         self.active_modal = None;
-        self.status_message = Some("Settings saved.".to_string());
         cx.notify();
     }
 
@@ -439,13 +466,19 @@ impl AppShell {
         let Some(legacy_dir) = self.storage.detected_legacy_dir().map(|p| p.to_path_buf()) else {
             return "No legacy Electron directory found.".to_string();
         };
+        let prev_theme = self.settings.theme_mode;
         match self.storage.migrate_from_directory(&legacy_dir) {
             Ok(report) => {
                 self.prompts = self
                     .storage
                     .load_prompts()
                     .unwrap_or_else(|_| self.prompts.clone());
-                self.settings = self.storage.load_settings().unwrap_or_default();
+                let mut loaded_settings = self.storage.load_settings().unwrap_or_default();
+                if report.settings_copied && loaded_settings.theme_mode != prev_theme {
+                    loaded_settings.theme_mode = prev_theme;
+                    let _ = self.storage.save_settings(&loaded_settings);
+                }
+                self.settings = loaded_settings;
                 cx.notify();
                 format!(
                     "Migrated {} prompt(s), settings: {}, order: {}.",
@@ -459,13 +492,7 @@ impl AppShell {
 
 impl Render for AppShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let bg = theme.background;
-        let border_color = theme.border;
-        let muted_fg = theme.muted_foreground;
-        let title_bar_bg = theme.title_bar;
-        let prompt_count = self.prompts.len();
-        let status_message = self.status_message.clone();
+        let bg = cx.theme().background;
 
         let workspace_pane = render_workspace_pane(self, window, cx);
 
@@ -506,30 +533,6 @@ impl Render for AppShell {
                         )
                         .child(resizable_panel().child(workspace_pane)),
                 ),
-            )
-            // Global Footer
-            .child(
-                h_flex()
-                    .px_4()
-                    .py_1p5()
-                    .bg(title_bar_bg)
-                    .border_t_1()
-                    .border_color(border_color)
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        Label::new(format!(
-                            "Promptly v{} • {} saved prompt{}",
-                            env!("CARGO_PKG_VERSION"),
-                            prompt_count,
-                            if prompt_count == 1 { "" } else { "s" }
-                        ))
-                        .text_xs()
-                        .text_color(muted_fg),
-                    )
-                    .when_some(status_message, |el, msg| {
-                        el.child(Label::new(msg).text_xs().text_color(muted_fg))
-                    }),
             )
             .when_some(modal_overlay, |el, modal| el.child(modal))
     }

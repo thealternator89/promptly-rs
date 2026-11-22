@@ -292,7 +292,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::PromptPart;
+    use crate::model::{PromptPart, ThemePreference};
     use tempfile::tempdir;
 
     fn sample_prompt(id: &str, title: &str, created_at: u64) -> Prompt {
@@ -343,6 +343,7 @@ mod tests {
         // Modify new settings and verify subsequent init_and_migrate does NOT overwrite
         let updated_settings = AppSettings {
             disallowed_domains: "new.example.com".into(),
+            theme_mode: ThemePreference::Dark,
         };
         storage.save_settings(&updated_settings).unwrap();
 

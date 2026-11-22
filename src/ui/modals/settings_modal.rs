@@ -54,10 +54,9 @@ impl SettingsModal {
 
     fn handle_save(&mut self, cx: &mut Context<Self>) {
         let disallowed_domains = self.domains_input.read(cx).value().to_string();
-        let settings = AppSettings { disallowed_domains };
         if let Some(app) = self.app.upgrade() {
             app.update(cx, |shell, cx| {
-                shell.save_settings_and_close(settings, cx);
+                shell.save_disallowed_domains_and_close(disallowed_domains, cx);
             });
         }
     }
