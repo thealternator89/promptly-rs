@@ -5,6 +5,7 @@ pub mod branding;
 pub mod model;
 pub mod services;
 pub mod ui;
+pub mod version;
 
 use gpui_kit::component::TitleBar;
 use gpui_kit::*;

@@ -369,7 +369,7 @@ impl Render for LibrarySidebar {
                             .gap_2()
                             .flex_shrink_0()
                             .child(
-                                Label::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                Label::new(format!("v{}", crate::version::APP_VERSION))
                                     .text_xs()
                                     .text_color(muted_fg),
                             )

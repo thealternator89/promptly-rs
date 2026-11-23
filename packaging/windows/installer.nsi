@@ -16,6 +16,10 @@
   !define VERSION "0.1.0"
 !endif
 
+!ifndef VI_VERSION
+  !define VI_VERSION "${VERSION}.0"
+!endif
+
 !ifndef ICON_PATH
   !define ICON_PATH "assets\icon.ico"
 !endif
@@ -42,12 +46,12 @@ SetCompressor /SOLID lzma
 !define MUI_UNICON "${ICON_PATH}"
 
 ; Version Information
-VIProductVersion "${VERSION}.0"
+VIProductVersion "${VI_VERSION}"
 VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey "CompanyName" "${PRODUCT_PUBLISHER}"
 VIAddVersionKey "LegalCopyright" "${PRODUCT_PUBLISHER}"
 VIAddVersionKey "FileDescription" "${PRODUCT_NAME} Setup"
-VIAddVersionKey "FileVersion" "${VERSION}.0"
+VIAddVersionKey "FileVersion" "${VI_VERSION}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 
 ; --------------------------------------------------
